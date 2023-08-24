@@ -3,17 +3,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
-use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use chrono::format::{DelayedFormat, StrftimeItems};
 use dirs::{config_dir, home_dir};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use notify::{Config, Event, EventKind, recommended_watcher, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
@@ -285,7 +284,7 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
                     if json.contains_key(&name) {
                         json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
                     } else {
-                        json.insert(name, Value::Number("0".parse().unwrap()));
+                        json.insert(name, Value::Number(Number::from(0)));
                     }
 
                     user_progress.inc(1);
@@ -475,7 +474,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match rx.recv() {
                 Ok(_) => {
                     check(String::from(path.clone()).as_str());
-                },
+                }
                 Err(e) => println!("watch error: {:?}", e),
             }
         }

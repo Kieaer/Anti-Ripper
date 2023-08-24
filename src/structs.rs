@@ -7,13 +7,6 @@ pub struct UserData {
     pub user_id: String
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UserRipperData {
-    pub display_name: String,
-    pub user_id: String,
-    pub count: i64
-}
-
 #[derive(Deserialize)]
 pub struct SearchData {
     name: String,
