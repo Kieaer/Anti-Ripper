@@ -2,14 +2,18 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::mpsc::channel;
+use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use chrono::format::{DelayedFormat, StrftimeItems};
-use dirs::config_dir;
+use dirs::{config_dir, home_dir};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use notify::{Config, Event, EventKind, recommended_watcher, RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
@@ -357,6 +361,36 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn check(file_path: &str) {
+    if let Ok(file) = File::open(file_path) {
+        let reader = BufReader::new(file);
+        let mut paragraph = String::new();
+        let mut empty_line_count = 0;
+
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                if line.trim().is_empty() {
+                    empty_line_count += 1;
+                    if empty_line_count == 2 {
+                        paragraph.clear();
+                        empty_line_count = 0;
+                    }
+                } else {
+                    paragraph.push_str(&line);
+                    paragraph.push('\n');
+                }
+            }
+        }
+
+        if !paragraph.is_empty() {
+            // 로그 확인
+            println!("Last Paragraph:\n{}", paragraph.trim());
+        }
+    } else {
+        println!("Failed to open the file");
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper"))?;
 
@@ -404,7 +438,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if auth_token.exists() && user_json.exists() && user_id.exists() && checked.exists() {
-        // 감시 코드 작성
+        let dir_path = home_dir().unwrap().join("AppData").join("LocalLow").join("VRChat");
+        let specific_word = "output_log";
+        let mut path: String = String::new();
+
+        if let Ok(entries) = fs::read_dir(dir_path) {
+            let mut earliest_creation_time: Option<std::time::SystemTime> = None;
+            let mut earliest_file_path: Option<String> = None;
+
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    if let Some(file_name) = entry.file_name().to_str() {
+                        if file_name.contains(specific_word) {
+                            let metadata = entry.metadata().unwrap();
+                            if let Ok(creation_time) = metadata.created() {
+                                if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
+                                    earliest_creation_time = Some(creation_time);
+                                    earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(file_path) = earliest_file_path {
+                path = file_path;
+            }
+        }
+
+        let (tx, rx) = channel();
+        let mut watcher: RecommendedWatcher = Watcher::new(tx, Config::default()).unwrap();
+        watcher.watch(PathBuf::from(path.clone()).as_path(), RecursiveMode::NonRecursive).unwrap();
+
+        loop {
+            match rx.recv() {
+                Ok(_) => {
+                    check(String::from(path.clone()).as_str());
+                },
+                Err(e) => println!("watch error: {:?}", e),
+            }
+        }
     }
 
     Ok(())
