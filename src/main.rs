@@ -1,21 +1,22 @@
 use std::cell::Cell;
 use std::collections::HashMap;
-use reqwest::blocking::{Client, RequestBuilder};
-use reqwest::header::{HeaderValue, COOKIE, USER_AGENT, AUTHORIZATION, HeaderMap};
-use base64::{Engine as _, engine::general_purpose};
-use reqwest::cookie::Cookie;
-use text_io::read;
 use std::fs;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::rc::Rc;
+
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use chrono::format::{DelayedFormat, StrftimeItems};
 use dirs::config_dir;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use reqwest::blocking::{Client, RequestBuilder};
+use reqwest::cookie::Cookie;
+use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
+use text_io::read;
 use ua_generator::ua::spoof_ua;
 
 const LOGIN_URL: &str = "https://api.vrchat.cloud/api/1/auth/user";
@@ -25,11 +26,11 @@ const API_URL: &str = "https://api.ripper.store/api/v2/avatars/search";
 const API_DETAIL_URL: &str = "https://api.ripper.store/api/v2/avatars/detail";
 const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / dev cloud9350@naver.com";
 
-fn filter_cookie<'a>(response: impl Iterator<Item = Cookie<'a>> + 'a) -> String {
-    return response.collect::<Vec<_>>().iter().map(|cookie| format!("{}={}", cookie.name(), cookie.value())).collect::<Vec<_>>().join("; ");
-}
-
 fn login() -> Result<(), Box<dyn std::error::Error>> {
+    fn filter_cookie<'a>(response: impl Iterator<Item=Cookie<'a>> + 'a) -> String {
+        return response.collect::<Vec<_>>().iter().map(|cookie| format!("{}={}", cookie.name(), cookie.value())).collect::<Vec<_>>().join("; ");
+    }
+
     loop {
         // 로그인
         println!("아이디를 입력 해 주세요");
@@ -104,15 +105,16 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
 
 struct UserData {
     display_name: String,
-    user_id: String
+    user_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UserRipperData {
     display_name: String,
     user_id: String,
-    count: i64
+    count: i64,
 }
+
 #[derive(Deserialize)]
 struct SearchData {
     name: String,
@@ -301,6 +303,10 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+
+    // VRCX 데이터를 수정하기 전에 백업
+    fs::copy(database_path.clone(), config_dir().unwrap().join("VRCX/VRCX_backup.sqlite3"))?;
+
     let conn = Connection::open(database_path)?;
     let mut stmt = conn.prepare("SELECT display_name, user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined'")?;
     let count_result = stmt.query_map([], |row| {
@@ -327,7 +333,6 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     let mut checked = Vec::new();
 
     println!("프로그램이 VRCX 데이터에서 누락된 사용자 ID를 추가 하고 있습니다.");
-    println!("절대로 창을 닫지 말아주세요. (닫으면 VRCX 데이터가 증발합니다)");
 
     let pb = ProgressBar::new(ready_count.get());
     let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).unwrap();
@@ -375,12 +380,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let checked = config_dir().unwrap().join("VRCX/Anti-Ripper/db_check.txt");
     let user_id = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.txt");
 
+    // 자동 로그인을 위해 계정 정보 가져오기
     if !auth_token.exists() {
         login()?;
     }
+    // VRCX 에서 누락된 데이터를 찾고 추가하기
     if !checked.exists() {
         search_old_logs()?;
     }
+    // 로그인 된 user_id 값을 확인하고 파일로 저장
     if !user_id.exists() {
         let mut file = File::open(auth_token.clone())?;
         let mut contents = String::new();
@@ -402,7 +410,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if auth_token.exists() && checked.exists() {
+    // 리퍼 스토어에서 정보 확인
+    if auth_token.exists() && checked.exists() && user_id.exists() {
         let mut file = File::open(user_id.clone())?;
         let mut text = String::new();
         file.read_to_string(&mut text)?;
