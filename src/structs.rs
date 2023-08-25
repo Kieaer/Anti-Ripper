@@ -4,14 +4,14 @@ use serde::{Deserialize, Serialize};
 pub struct UserData {
     pub created_at: String,
     pub display_name: String,
-    pub user_id: String
+    pub user_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveData {
     pub count: u32,
     pub idents: Vec<String>,
-    pub avatar_list: Vec<AvatarData>
+    pub avatar_list: Vec<AvatarData>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub struct AvatarData {
     pub name: String,
     pub created: u64,
     pub added: u64,
-    pub updated: Option<u64>
+    pub updated: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

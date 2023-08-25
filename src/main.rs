@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread::available_parallelism;
 
@@ -23,8 +24,8 @@ use rusqlite::Connection;
 use serde_json::{json, Map, Number, Value};
 use text_io::read;
 use ua_generator::ua::spoof_ua;
-use crate::library::convert_time;
 
+use crate::library::convert_time;
 use crate::structs::{AvatarData, AvatarList, Item, SaveData, SearchData, UserData};
 
 mod structs;
@@ -129,7 +130,7 @@ fn get_info_from_server(user_name: String) -> Value {
         json
     } else {
         json!({})
-    }
+    };
 }
 
 // working
@@ -273,55 +274,74 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(database_path)?;
     let mut stmt = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined'")?;
     let ready_count = Rc::new(Cell::new(0));
-    let result = stmt.query_map([], |row| {
+    let mut data_list = vec![];
+    let _ = stmt.query_map([], |row| {
         let data = UserData {
             created_at: row.get(0)?,
             display_name: row.get(1)?,
             user_id: row.get(2)?,
         };
 
-        if !data.user_id.is_empty() {
+        data_list.push(data);
+
+        Ok(())
+    })?;
+
+    let _ = stmt.query_map([], |row| {
+        let data = UserData {
+            created_at: row.get(0)?,
+            display_name: row.get(1)?,
+            user_id: row.get(2)?,
+        };
+
+        if data.user_id.unwrap().is_empty() {
             ready_count.set(ready_count.get() + 1);
         }
 
-        Ok(data)
+        Ok(())
     })?;
 
-    let mut checked = Vec::new();
+    let checked = Arc::new(Mutex::new(vec![]));
 
     println!("프로그램이 VRCX 데이터에서 누락된 사용자 ID를 추가 하고 있습니다.");
+    let cpu_thread = 4;
+    let pool = ThreadPoolBuilder::new().num_threads(cpu_thread).build().unwrap();
 
-    let mut user_list = vec![];
-
+    let user_list = Arc::new(Mutex::new(vec![]));
     let pb = ProgressBar::new(ready_count.get());
-    for value in result {
-        let data = value.unwrap();
-        if data.user_id.is_empty() {
-            if !checked.contains(&data.display_name) {
-                let mut select_query = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE display_name = ?1")?;
-                let mut select = |user_id: String| {
-                    let _ = select_query.query_map([user_id], |row| {
-                        Ok(UserData {
-                            created_at: row.get(0)?,
-                            display_name: row.get(1)?,
-                            user_id: row.get(2)?,
-                        })
-                    }).expect("SQL Failed");
-                };
 
-                let json = get_info_from_server(data.display_name.clone());
-                if data.display_name.clone() == json["display_name"] {
-                    user_list.push(select(json["id"].to_string()))
+    pool.scope(|s| {
+        for value in data_list.into_iter() {
+            s.spawn(|_| {
+                if value.user_id.unwrap().is_empty() {
+                    if checked.lock().unwrap().contains(&value.display_name) {
+                        let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+                        let conn = Connection::open(database_path).unwrap();
+                        let mut select_query = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE display_name = ?1").unwrap();
+                        let mut select = |user_id: String| {
+                            let _ = select_query.query_map([user_id], |row| {
+                                Ok(UserData {
+                                    created_at: row.get(0)?,
+                                    display_name: row.get(1)?,
+                                    user_id: row.get(2)?,
+                                })
+                            }).expect("SQL Failed");
+                        };
+
+                        let json = get_info_from_server(value.display_name.clone());
+                        if value.display_name.clone() == json["display_name"] {
+                            user_list.lock().unwrap().push(select(json["id"].to_string()))
+                        }
+                        checked.lock().unwrap().push(value.display_name);
+                    }
                 }
-                checked.push(data.display_name);
-            }
-            pb.inc(1);
+            });
         }
-    }
+    });
 
     let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
-    fs::write(ids, serde_json::to_string(&user_list).unwrap())?;
-    user_list.clear();
+    fs::write(ids, serde_json::to_string(&*user_list.lock().unwrap()).unwrap())?;
+    user_list.lock().unwrap().clear();
     pb.finish();
 
     Ok(())
@@ -532,7 +552,6 @@ fn check_log(file_path: &str) {
                 if let Some(word_after) = captures.get(1) {
                     // 확인
                     let json = get_info_from_server(word_after.as_str().to_string());
-
                 }
             } else {
                 println!("No match found.");
@@ -558,7 +577,7 @@ fn check_current_count(user_id: &str) {
 
     // 파일에 저장할 정보
     let count: u32;
-    let mut idents:Vec<String> = vec![];
+    let mut idents: Vec<String> = vec![];
     let mut avatar_list = vec![];
 
     // 리퍼 스토어에게 안걸리도록 무작위 User-Agent 전송
@@ -619,7 +638,8 @@ fn check_current_count(user_id: &str) {
         } else {
             let data: SaveData = serde_json::from_reader(File::open(path.clone()).unwrap()).unwrap();
             if count != data.count {
-                // 이 인간은 한번도 뜯기지 않은 아바타가 드디어 뜯겨버렸다. 라는 코드를 쓰자
+                // TODO 이 인간은 한번도 뜯기지 않은 아바타가 드디어 뜯겨버렸다. 라는 코드를 쓰자
+                println!("아바타가 새로 뜯겼습니다.")
             }
         }
 
