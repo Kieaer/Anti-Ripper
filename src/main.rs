@@ -1,16 +1,18 @@
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::fs;
+use std::{fs, thread};
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, stderr, Write};
+use std::ops::Add;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread::available_parallelism;
+use std::time::{Duration, SystemTime};
 
 use base64::{Engine as _, engine::general_purpose};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono::format::{DelayedFormat, StrftimeItems};
 use dirs::{config_dir, home_dir};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -117,7 +119,7 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
 
 fn get_info_from_server(user_name: String) -> Value {
     let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).unwrap();
-    let url = format!("https://api.vrchat.cloud/api/1/users?search={}?n={}&developerType=internal", user_name, 1);
+    let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n={}", user_name, 1);
     let client = Client::new();
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
@@ -129,6 +131,7 @@ fn get_info_from_server(user_name: String) -> Value {
         let json: Value = serde_json::from_str(&*body).unwrap();
         json
     } else {
+        println!("FAILED");
         json!({})
     };
 }
@@ -274,75 +277,66 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(database_path)?;
     let mut stmt = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined'")?;
     let ready_count = Rc::new(Cell::new(0));
-    let mut data_list = vec![];
-    let _ = stmt.query_map([], |row| {
-        let data = UserData {
+    let mut data_list: Vec<UserData> = vec![];
+    let parse_data = stmt.query_map([], |row| {
+        Ok(UserData {
             created_at: row.get(0)?,
             display_name: row.get(1)?,
             user_id: row.get(2)?,
-        };
-
-        data_list.push(data);
-
-        Ok(())
+        })
     })?;
 
-    let _ = stmt.query_map([], |row| {
-        let data = UserData {
-            created_at: row.get(0)?,
-            display_name: row.get(1)?,
-            user_id: row.get(2)?,
-        };
+    for user in parse_data {
+        data_list.push(user.unwrap());
+    }
 
-        if data.user_id.unwrap().is_empty() {
+    for value in data_list.clone().into_iter() {
+        if value.user_id.unwrap().is_empty() {
             ready_count.set(ready_count.get() + 1);
         }
+    }
 
-        Ok(())
-    })?;
-
-    let checked = Arc::new(Mutex::new(vec![]));
+    let mut checked = vec![];
 
     println!("프로그램이 VRCX 데이터에서 누락된 사용자 ID를 추가 하고 있습니다.");
-    let cpu_thread = 4;
-    let pool = ThreadPoolBuilder::new().num_threads(cpu_thread).build().unwrap();
+    let datetime: DateTime<Utc> = SystemTime::now().add(Duration::from_secs(3 * ready_count.get())).into();
+    println!("예상 완료 시간: {}", datetime.format("%F %r"));
 
-    let user_list = Arc::new(Mutex::new(vec![]));
+    let mut user_list = vec![];
     let pb = ProgressBar::new(ready_count.get());
 
-    pool.scope(|s| {
-        for value in data_list.into_iter() {
-            s.spawn(|_| {
-                if value.user_id.unwrap().is_empty() {
-                    if checked.lock().unwrap().contains(&value.display_name) {
-                        let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-                        let conn = Connection::open(database_path).unwrap();
-                        let mut select_query = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE display_name = ?1").unwrap();
-                        let mut select = |user_id: String| {
-                            let _ = select_query.query_map([user_id], |row| {
-                                Ok(UserData {
-                                    created_at: row.get(0)?,
-                                    display_name: row.get(1)?,
-                                    user_id: row.get(2)?,
-                                })
-                            }).expect("SQL Failed");
-                        };
+    for value in data_list.into_iter() {
+        if value.user_id.unwrap().is_empty() {
+            if !checked.contains(&value.display_name) {
+                let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+                let conn = Connection::open(database_path).unwrap();
+                let mut select_query = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE display_name = ?1").unwrap();
+                let mut select = |user_id: String| {
+                    let _ = select_query.query_map([user_id], |row| {
+                        Ok(UserData {
+                            created_at: row.get(0)?,
+                            display_name: row.get(1)?,
+                            user_id: row.get(2)?,
+                        })
+                    }).expect("SQL Failed");
+                };
 
-                        let json = get_info_from_server(value.display_name.clone());
-                        if value.display_name.clone() == json["display_name"] {
-                            user_list.lock().unwrap().push(select(json["id"].to_string()))
-                        }
-                        checked.lock().unwrap().push(value.display_name);
-                    }
+                let json = get_info_from_server(value.display_name.clone());
+                if value.display_name.clone() == json[0]["displayName"] {
+                    user_list.push(select(json[0]["id"].to_string()));
                 }
-            });
+                checked.push(value.display_name);
+
+                thread::sleep(Duration::from_secs(60));
+            }
         }
-    });
+        pb.inc(1);
+    }
 
     let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
-    fs::write(ids, serde_json::to_string(&*user_list.lock().unwrap()).unwrap())?;
-    user_list.lock().unwrap().clear();
-    pb.finish();
+    fs::write(ids, serde_json::to_string(&*user_list).unwrap())?;
+    user_list.clear();
+    pb.finish_with_message("완료");
 
     Ok(())
 }

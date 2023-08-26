@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UserData {
     pub created_at: String,
     pub display_name: String,
@@ -12,6 +12,12 @@ pub struct SaveData {
     pub count: u32,
     pub idents: Vec<String>,
     pub avatar_list: Vec<AvatarData>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ParseData {
+    display_name: String,
+    id: String,
 }
 
 #[derive(Serialize, Deserialize)]
