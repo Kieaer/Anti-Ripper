@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::{fs, thread};
+use std::fmt::format;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, stderr, Write};
 use std::ops::Add;
@@ -117,21 +118,27 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_info_from_server(user_name: String) -> Value {
+fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
     let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).unwrap();
     let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n={}", user_name, 1);
     let client = Client::new();
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
     headers.insert(COOKIE, HeaderValue::from_str(&*token).unwrap());
-    let response = client.get(url).headers(headers).send().unwrap();
+
+    let mut response = client.get(url.clone()).headers(headers.clone()).send().unwrap();
+    while !response.status().is_success() {
+        pb.set_message("브챗 서버가 과열 되었습니다! 식을 때 까지 대기중...");
+        thread::sleep(Duration::from_secs(305));
+        response = client.get(url.clone()).headers(headers.clone()).send().unwrap();
+    }
+    pb.set_message("");
 
     return if response.status().is_success() {
         let body = response.text().unwrap();
         let json: Value = serde_json::from_str(&*body).unwrap();
         json
     } else {
-        println!("FAILED");
         json!({})
     };
 }
@@ -298,43 +305,64 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut checked = vec![];
 
+    let cooltime = 60;
     println!("프로그램이 VRCX 데이터에서 누락된 사용자 ID를 추가 하고 있습니다.");
-    let datetime: DateTime<Utc> = SystemTime::now().add(Duration::from_secs(3 * ready_count.get())).into();
-    println!("예상 완료 시간: {}", datetime.format("%F %r"));
+    let mut user_list: Vec<UserData> = vec![];
 
-    let mut user_list = vec![];
+    let spinner_style = ProgressStyle::with_template("{wide_bar:.cyan/blue} {pos}/{len}\n{msg}").unwrap().progress_chars("#>-");
     let pb = ProgressBar::new(ready_count.get());
+    pb.set_style(spinner_style);
+
+    if config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json").exists() {
+        let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+        user_list = file_json;
+    }
+
+    for v in user_list.clone() {
+        checked.push(v.display_name);
+        pb.inc(1);
+        pb.set_message("이미 저장된 데이터를 확인하는 중...")
+    }
+    pb.set_message("");
 
     for value in data_list.into_iter() {
         if value.user_id.unwrap().is_empty() {
             if !checked.contains(&value.display_name) {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
                 let conn = Connection::open(database_path).unwrap();
-                let mut select_query = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE display_name = ?1").unwrap();
-                let mut select = |user_id: String| {
-                    let _ = select_query.query_map([user_id], |row| {
+
+                let json = get_info_from_server(value.display_name.clone(), &pb);
+                if !config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json").exists() {
+                    fs::write(config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json"), "[]")?;
+                }
+
+                let user_data_file = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap();
+                if value.display_name.clone() == json[0]["displayName"] && !user_data_file.contains(&value.display_name) {
+                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).unwrap();
+                    let result = select_query.query_map([], |row| {
                         Ok(UserData {
                             created_at: row.get(0)?,
-                            display_name: row.get(1)?,
-                            user_id: row.get(2)?,
+                            display_name: json[0]["displayName"].to_string().replace("\"",""),
+                            user_id: Option::from(json[0]["id"].to_string().replace("\"","")),
                         })
-                    }).expect("SQL Failed");
-                };
+                    })?;
 
-                let json = get_info_from_server(value.display_name.clone());
-                if value.display_name.clone() == json[0]["displayName"] {
-                    user_list.push(select(json[0]["id"].to_string()));
+                    for data in result {
+                        user_list.push(data.unwrap());
+                        break;
+                    }
+
+                    let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
+                    fs::write(ids, serde_json::to_string(&user_list).unwrap())?;
                 }
                 checked.push(value.display_name);
-
-                thread::sleep(Duration::from_secs(60));
             }
         }
         pb.inc(1);
     }
 
-    let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
-    fs::write(ids, serde_json::to_string(&*user_list).unwrap())?;
+    let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id_done.txt");
+    fs::write(ids, "모든 ID 확인이 끝났다는걸 확인하는 파일")?;
     user_list.clear();
     pb.finish_with_message("완료");
 
@@ -545,7 +573,7 @@ fn check_log(file_path: &str) {
             if let Some(captures) = re.captures(paragraph.trim()) {
                 if let Some(word_after) = captures.get(1) {
                     // 확인
-                    let json = get_info_from_server(word_after.as_str().to_string());
+                    // let json = get_info_from_server(word_after.as_str().to_string());
                 }
             } else {
                 println!("No match found.");
@@ -649,7 +677,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let auth_token = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
     let user_id = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.txt");
-    let user_json = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
+    let user_json = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id_done.txt");
     let checked = config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt");
 
     // 자동 로그인을 위해 계정 정보 가져오기
