@@ -603,21 +603,39 @@ fn check_current_count(user_id: &str) -> bool {
     false
 }
 
-shadow!(BUILD);
+shadow!(build);
 
 fn print_author() {
-    println!("Anti-ripper 1.0");
-    println!("빌드 시간: {}", BUILD.built_time_fmt("%Y-%m-%d %H:%M:%S"));
-
-    println!("Anti-ripper 1.0");
+    println!("Anti-ripper {} / {} / {}", build::PKG_VERSION, build::RUST_VERSION, build::BUILD_OS);
+    println!("빌드 날짜: {}", build::BUILD_TIME);
     println!("");
     println!("제작자: 키에르");
+    println!("Github: https://github.com/kieaer/Anti-Ripper");
+}
+
+fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
+    let response = reqwest::blocking::get("https://api.github.com/repos/kieaer/Anti-ripper/releases/latest")?;
+
+    if response.status().is_success() {
+        let release: serde_json::Value = response.json()?;
+        let tag_name = release["tag_name"].as_str().unwrap_or("Unknown");
+        let description = release["body"].as_str().unwrap_or("No description available");
+
+        if tag_name != build::PKG_VERSION {
+            println!("{} 버전이 나왔습니다. (현재 {} 버전)", tag_name, build::PKG_VERSION);
+            println!("== 업데이트 내용");
+            println!("{}", description);
+        }
+    } else {
+        println!("Failed to fetch release information");
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_author();
-
-    Ok(());
+    auto_update()?;
 
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper"))?;
 
