@@ -133,8 +133,9 @@ fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
         pb.set_message("브챗 서버가 과열 되었습니다! 식을 때 까지 대기중...");
         thread::sleep(Duration::from_secs(305));
         response = client.get(url.clone()).headers(headers.clone()).send().unwrap();
+        pb.set_message("");
     }
-    pb.set_message("");
+
 
     return if response.status().is_success() {
         let body = response.text().unwrap();
@@ -323,7 +324,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
         ready_count = ready_count + 1;
     }
 
-    let style = ProgressStyle::with_template("{wide_bar:.cyan/blue} {pos}/{len}\n{msg}")?.progress_chars("#>-");
+    let style = ProgressStyle::with_template("{msg}\n{wide_bar:.cyan/blue} {pos}/{len}")?.progress_chars("#>-");
     let pb = ProgressBar::new(ready_count);
     pb.set_style(style);
 
@@ -349,6 +350,8 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
             if !checked.contains(&value.display_name) {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
                 let conn = Connection::open(database_path)?;
+
+                pb.set_message(format!("{} 유저 데이터 다운로드중...", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
 
                 let json = get_info_from_server(value.display_name.clone(), &pb);
                 if !config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json").exists() {
@@ -377,6 +380,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else {
             if !checked.contains(&value.display_name) {
+                pb.set_message(format!("{}", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
                 user_list.push(UserData {
                     created_at: value.created_at,
                     display_name: value.display_name.clone(),
