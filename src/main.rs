@@ -10,8 +10,7 @@ use std::thread::available_parallelism;
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
-use chrono::format::{DelayedFormat, StrftimeItems};
+use chrono::TimeZone;
 use dirs::{config_dir, home_dir};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
