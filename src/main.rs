@@ -1,19 +1,16 @@
+use std::{fs, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::{fs, thread};
-use std::fmt::format;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, stderr, Write};
-use std::ops::Add;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread::available_parallelism;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use chrono::format::{DelayedFormat, StrftimeItems};
 use dirs::{config_dir, home_dir};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -52,7 +49,7 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
         print!("아이디: ");
         let id: String = read!();
         print!("비밀번호: ");
-        let pw: String = read_password().unwrap();
+        let pw: String = read_password()?;
 
         // 로그인 Header 생성
         let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw))))?;
@@ -67,7 +64,7 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
         let cloned = client.get(LOGIN_URL).headers(login_header).send()?;
 
         if login_get_response.status().is_success() {
-            let otp_type = cloned.text().unwrap().contains("totp");
+            let otp_type = cloned.text()?.contains("totp");
 
             println!("2단계 인증 코드 6자리를 입력하세요. 인증 앱 또는 이메일을 확인하시면 됩니다.");
             loop {
@@ -77,7 +74,7 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
                 map.insert("code", code);
 
                 let mut post_headers = HeaderMap::new();
-                post_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
+                post_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse()?);
                 post_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie))?);
 
                 // 2단계 인증이 인증 앱인지 이메일 인증인지 확인
@@ -97,7 +94,7 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
                     let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw))))?;
 
                     let mut token_login_headers = HeaderMap::new();
-                    token_login_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
+                    token_login_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse()?);
                     token_login_headers.insert(AUTHORIZATION, account_auth_header);
                     token_login_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie))?);
 
@@ -149,134 +146,154 @@ fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
     };
 }
 
-// working
 fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let ua = spoof_ua();
 
-    let page = "1";
-    let params = [("category", "authorid"), ("page", page), ("search", user_id), ("status", "both"), ("ordering", "none"), ("platform", "all"), ("limit", "36")];
+    let params = [("category", "authorid"), ("page", "1"), ("search", user_id), ("status", "both"), ("ordering", "none"), ("platform", "all"), ("limit", "36")];
     let response = client.get(API_URL)
         .form(&params)
         .header(USER_AGENT, ua)
         .send()?;
     if response.status().is_success() {
-        let body = response.text().unwrap();
+        let body = response.text()?;
         let json: Value = serde_json::from_str(&*body)?;
-        let avatars = json["avatars"].as_array().unwrap();
-        let mut idents = Vec::new();
+        let page: u64 = json["pages"].as_u64().unwrap();
 
-        for avatar in avatars {
-            let avatar: SearchData = serde_json::from_value(avatar.clone())?;
-            idents.push(avatar.ident);
-        }
+        let avatar_total = json["count"].as_u64().unwrap();
+        let sty = ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")?.progress_chars("##-");
+        let avatar_progress = ProgressBar::new(avatar_total);
+        avatar_progress.set_style(sty.clone());
 
-        let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-        let ripper_path = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
-        let conn = Connection::open(database_path)?;
-
-        for ident in idents {
-            let params = [("ident", ident)];
-            let response = client.get(API_DETAIL_URL)
+        for i in 1..page {
+            let params = [("category", "authorid"), ("page", &i.to_string()), ("search", user_id), ("status", "both"), ("ordering", "none"), ("platform", "all"), ("limit", "36")];
+            let response = client.get(API_URL)
                 .form(&params)
                 .header(USER_AGENT, ua)
                 .send()?;
             if response.status().is_success() {
-                let json: Value = serde_json::from_str(&*body)?;
+                let avatars = json["avatars"].as_array().unwrap();
+                let mut idents = Vec::new();
 
-                // 처음 뜯긴 시간에서 뒤로 5분 범위
-                let base_time = convert_time(json["dateAdded"].as_i64().unwrap() - 300000);
-
-                // 처음 뜯긴 시간에서 앞으로 5분 범위
-                let range_time = convert_time(json["dateAdded"].as_i64().unwrap() + 300000);
-
-                // 뜯긴 시점에 있던 사람들 검색
-                let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
-                let mut stmt = conn.prepare(&sql)?;
-
-                let total_user = Rc::new(Cell::new(0));
-                let result = stmt.query_map([], |row| {
-                    let total_user = Rc::clone(&total_user);
-                    total_user.set(total_user.get() + 1);
-                    Ok(UserData {
-                        created_at: row.get(0)?,
-                        display_name: row.get(1)?,
-                        user_id: row.get(2)?,
-                    })
-                })?;
-
-                if !ripper_path.exists() {
-                    let map = Map::new();
-                    let mut writer = BufWriter::new(File::create(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json").to_str().unwrap())?);
-                    serde_json::to_writer(&mut writer, &map)?;
-                    writer.flush()?;
+                for avatar in avatars {
+                    let avatar: SearchData = serde_json::from_value(avatar.clone())?;
+                    idents.push(avatar.ident);
                 }
 
-                let mut file = File::open(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"))?;
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)?;
+                let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+                let ripper_path = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
+                let conn = Connection::open(database_path)?;
 
-                let mut json: Map<String, Value> = serde_json::from_str(&contents)?;
+                for ident in idents {
+                    let params = [("ident", ident)];
+                    let response = client.get(API_DETAIL_URL)
+                        .form(&params)
+                        .header(USER_AGENT, ua)
+                        .send()?;
+                    if response.status().is_success() {
+                        let json: Value = serde_json::from_str(&*body)?;
 
-                for value in result {
-                    let data = value;
-                    let name = data.unwrap().display_name;
+                        // 처음 뜯긴 시간에서 뒤로 1분 범위
+                        let base_time = convert_time(json["dateAdded"].as_i64().unwrap() - 60000);
 
-                    if json.contains_key(&name) {
-                        json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
-                    } else {
-                        json.insert(name, Value::Number(Number::from(0)));
-                    }
-                }
+                        // 처음 뜯긴 시간에서 앞으로 1분 범위
+                        let range_time = convert_time(json["dateAdded"].as_i64().unwrap() + 60000);
 
-                if !json["lastUpdated"].is_null() {
-                    // 마지막으로 뜯긴 시간에서 뒤로 5분 범위
-                    let base_time = convert_time(json["lastUpdated"].as_i64().unwrap() - 300000);
+                        // 뜯긴 시점에 있던 사람들 검색
+                        let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
+                        let mut stmt = conn.prepare(&sql)?;
 
-                    // 마지막으로 뜯긴 시간에서 뒤로 5분 범위
-                    let range_time = convert_time(json["lastUpdated"].as_i64().unwrap() + 300000);
+                        let total_user = Rc::new(Cell::new(0));
+                        let result = stmt.query_map([], |row| {
+                            let total_user = Rc::clone(&total_user);
+                            total_user.set(total_user.get() + 1);
+                            Ok(UserData {
+                                created_at: row.get(0)?,
+                                display_name: row.get(1)?,
+                                user_id: row.get(2)?,
+                            })
+                        })?;
 
-                    let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
-                    let mut stmt = conn.prepare(&sql)?;
-
-                    let total_user = Rc::new(Cell::new(0));
-                    let result = stmt.query_map([], |row| {
-                        let total_user = Rc::clone(&total_user);
-                        total_user.set(total_user.get() + 1);
-                        Ok(UserData {
-                            created_at: row.get(0)?,
-                            display_name: row.get(1)?,
-                            user_id: row.get(2)?,
-                        })
-                    })?;
-
-                    if !ripper_path.exists() {
-                        let map = Map::new();
-                        let mut writer = BufWriter::new(File::create(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json").to_str().unwrap())?);
-                        serde_json::to_writer(&mut writer, &map)?;
-                        writer.flush()?;
-                    }
-
-                    let mut file = File::open(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"))?;
-                    let mut contents = String::new();
-                    file.read_to_string(&mut contents)?;
-
-                    let mut json: Map<String, Value> = serde_json::from_str(&contents)?;
-
-                    for value in result {
-                        let data = value;
-                        let name = data.unwrap().display_name;
-
-                        if json.contains_key(&name) {
-                            json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
-                        } else {
-                            json.insert(name, Value::Number("0".parse().unwrap()));
+                        if !ripper_path.exists() {
+                            let map = Map::new();
+                            let mut writer = BufWriter::new(File::create(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json").to_str().unwrap())?);
+                            serde_json::to_writer(&mut writer, &map)?;
+                            writer.flush()?;
                         }
+
+                        let mut file = File::open(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"))?;
+                        let mut contents = String::new();
+                        file.read_to_string(&mut contents)?;
+
+                        let mut json: Map<String, Value> = serde_json::from_str(&contents)?;
+
+                        for value in result {
+                            let data = value;
+                            let name = data?.display_name;
+
+                            if json.contains_key(&name) {
+                                json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
+                            } else {
+                                json.insert(name, Value::Number(Number::from(0)));
+                            }
+                        }
+
+                        if !json["lastUpdated"].is_null() {
+                            // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
+                            let base_time = convert_time(json["lastUpdated"].as_i64().unwrap() - 60000);
+
+                            // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
+                            let range_time = convert_time(json["lastUpdated"].as_i64().unwrap() + 60000);
+
+                            let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
+                            let mut stmt = conn.prepare(&sql)?;
+
+                            let total_user = Rc::new(Cell::new(0));
+                            let result = stmt.query_map([], |row| {
+                                let total_user = Rc::clone(&total_user);
+                                total_user.set(total_user.get() + 1);
+                                Ok(UserData {
+                                    created_at: row.get(0)?,
+                                    display_name: row.get(1)?,
+                                    user_id: row.get(2)?,
+                                })
+                            })?;
+
+                            if !ripper_path.exists() {
+                                let map = Map::new();
+                                let mut writer = BufWriter::new(File::create(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json").to_str().unwrap())?);
+                                serde_json::to_writer(&mut writer, &map)?;
+                                writer.flush()?;
+                            }
+
+                            let mut file = File::open(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"))?;
+                            let mut contents = String::new();
+                            file.read_to_string(&mut contents)?;
+
+                            let mut json: Map<String, Value> = serde_json::from_str(&contents)?;
+
+                            for value in result {
+                                let data = value;
+                                let name = data?.display_name;
+
+                                if json.contains_key(&name) {
+                                    json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
+                                } else {
+                                    json.insert(name, Value::Number("0".parse()?));
+                                }
+                            }
+                        }
+
+                        avatar_progress.inc(1);
                     }
                 }
             }
         }
+        avatar_progress.finish_and_clear();
     }
+
+    let checked = config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt");
+    fs::write(checked, "VRCX 데이터를 사용하여 리퍼 스토어에서 뜯긴 아바타를 모두 계산 했다는 확인 파일")?;
 
     Ok(())
 }
@@ -289,7 +306,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
     let conn = Connection::open(database_path)?;
     let mut stmt = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined'")?;
-    let ready_count = Rc::new(Cell::new(0));
+    let mut ready_count = 0;
     let mut data_list: Vec<UserData> = vec![];
     let parse_data = stmt.query_map([], |row| {
         Ok(UserData {
@@ -300,27 +317,24 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     for user in parse_data {
-        data_list.push(user.unwrap());
+        data_list.push(user?);
     }
 
-    for value in data_list.clone().into_iter() {
-        if value.user_id.unwrap().is_empty() {
-            ready_count.set(ready_count.get() + 1);
-        }
+    for _ in data_list.clone().into_iter() {
+        ready_count = ready_count + 1;
     }
+
+    let style = ProgressStyle::with_template("{wide_bar:.cyan/blue} {pos}/{len}\n{msg}")?.progress_chars("#>-");
+    let pb = ProgressBar::new(ready_count);
+    pb.set_style(style);
 
     let mut checked = vec![];
 
-    let cooltime = 60;
     println!("프로그램이 VRCX 데이터에서 누락된 사용자 ID를 추가 하고 있습니다.");
     let mut user_list: Vec<UserData> = vec![];
 
-    let spinner_style = ProgressStyle::with_template("{wide_bar:.cyan/blue} {pos}/{len}\n{msg}").unwrap().progress_chars("#>-");
-    let pb = ProgressBar::new(ready_count.get());
-    pb.set_style(spinner_style);
-
     if config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json").exists() {
-        let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+        let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json"))?)?;
         user_list = file_json;
     }
 
@@ -332,38 +346,47 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     pb.set_message("");
 
     for value in data_list.into_iter() {
-        if value.user_id.unwrap().is_empty() {
+        if value.clone().user_id.is_empty() {
             if !checked.contains(&value.display_name) {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-                let conn = Connection::open(database_path).unwrap();
+                let conn = Connection::open(database_path)?;
 
                 let json = get_info_from_server(value.display_name.clone(), &pb);
                 if !config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json").exists() {
                     fs::write(config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json"), "[]")?;
                 }
 
-                let user_data_file = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap();
+                let user_data_file = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json"))?;
                 if value.display_name.clone() == json[0]["displayName"] && !user_data_file.contains(&value.display_name) {
-                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).unwrap();
+                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"]))?;
                     let result = select_query.query_map([], |row| {
                         Ok(UserData {
                             created_at: row.get(0)?,
-                            display_name: json[0]["displayName"].to_string().replace("\"",""),
-                            user_id: Option::from(json[0]["id"].to_string().replace("\"","")),
+                            display_name: json[0]["displayName"].to_string().replace("\"", ""),
+                            user_id: json[0]["id"].to_string().replace("\"", ""),
                         })
                     })?;
 
                     for data in result {
-                        user_list.push(data.unwrap());
+                        user_list.push(data?);
                         break;
                     }
 
                     let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
-                    fs::write(ids, serde_json::to_string(&user_list).unwrap())?;
+                    fs::write(ids, serde_json::to_string(&user_list)?)?;
                 }
-                checked.push(value.display_name);
             }
+        } else {
+            user_list.push(UserData {
+                created_at: value.created_at,
+                display_name: value.display_name.clone(),
+                user_id: value.user_id,
+            });
+
+            let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
+            fs::write(ids, serde_json::to_string(&user_list)?)?;
         }
+        checked.push(value.display_name);
         pb.inc(1);
     }
 
@@ -375,7 +398,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn search_store_old_log(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     fn convert_time<'a>(value: i64) -> DelayedFormat<StrftimeItems<'a>> {
         let time = NaiveDateTime::from_timestamp_millis(value);
         let datetime = DateTime::<Local>::from_utc(time.unwrap(), Local.offset_from_utc_datetime(&time.unwrap()));
@@ -385,7 +408,6 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let ua = spoof_ua();
 
-    // todo page 많을 경우 추가
     let page = "1";
     let params = [("category", "authorid"), ("page", page), ("search", user_id), ("status", "both"), ("ordering", "none"), ("platform", "all"), ("limit", "36")];
     let response = client.get(API_URL)
@@ -393,19 +415,14 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         .header(USER_AGENT, ua)
         .send()?;
     if response.status().is_success() {
-        let body = response.text().unwrap();
+        let body = response.text()?;
         let json: Value = serde_json::from_str(&*body)?;
         let avatars = json["avatars"].as_array().unwrap();
         let mut idents = Vec::new();
 
         let avatar_total = Rc::new(Cell::new(0));
         let m = MultiProgress::new();
-        let sty = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
-        )
-            .unwrap()
-            .progress_chars("##-");
-
+        let sty = ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")?.progress_chars("##-");
 
         for avatar in avatars {
             let avatar: SearchData = serde_json::from_value(avatar.clone())?;
@@ -415,7 +432,6 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
 
         let avatar_progress = m.add(ProgressBar::new(avatar_total.get()));
         avatar_progress.set_style(sty.clone());
-        avatar_progress.set_message("Avatar ");
 
         let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
         let ripper_path = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
@@ -430,30 +446,42 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
             if response.status().is_success() {
                 let json: Value = serde_json::from_str(&*body)?;
 
-                // 처음 뜯긴 시간에서 뒤로 5분 범위
-                let base_time = convert_time(json["dateAdded"].as_i64().unwrap() - 300000);
+                // 처음 뜯긴 시간에서 뒤로 1분 범위
+                let base_time = convert_time(json["dateAdded"].as_i64().unwrap() - 60000);
 
-                // 처음 뜯긴 시간에서 앞으로 5분 범위
-                let range_time = convert_time(json["dateAdded"].as_i64().unwrap() + 300000);
+                // 처음 뜯긴 시간에서 앞으로 1분 범위
+                let range_time = convert_time(json["dateAdded"].as_i64().unwrap() + 60000);
 
                 // 뜯긴 시점에 있던 사람들 검색
-                let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
+                let sql = format!("SELECT created_at,display_name FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
                 let mut stmt = conn.prepare(&sql)?;
 
                 let total_user = Rc::new(Cell::new(0));
                 let result = stmt.query_map([], |row| {
                     let total_user = Rc::clone(&total_user);
                     total_user.set(total_user.get() + 1);
+
+                    let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+                    let mut user_id: String = String::new();
+                    for value in file_json {
+                        let created_at: String = row.get(0).unwrap();
+                        let display_name: String = row.get(1).unwrap();
+
+                        if value.created_at == created_at && value.display_name == display_name {
+                            user_id = value.user_id;
+                            break;
+                        }
+                    }
+
                     Ok(UserData {
                         created_at: row.get(0)?,
                         display_name: row.get(1)?,
-                        user_id: row.get(2)?,
+                        user_id,
                     })
                 })?;
 
                 let user_progress = m.add(ProgressBar::new(total_user.get()));
                 user_progress.set_style(sty.clone());
-                user_progress.set_message("User ");
 
                 if !ripper_path.exists() {
                     let map = Map::new();
@@ -470,7 +498,7 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
 
                 for value in result {
                     let data = value;
-                    let name = data.unwrap().display_name;
+                    let name = data?.display_name;
 
                     if json.contains_key(&name) {
                         json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
@@ -484,29 +512,41 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
                 m.remove(&user_progress);
 
                 if !json["lastUpdated"].is_null() {
-                    // 마지막으로 뜯긴 시간에서 뒤로 5분 범위
-                    let base_time = convert_time(json["lastUpdated"].as_i64().unwrap() - 300000);
+                    // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
+                    let base_time = convert_time(json["lastUpdated"].as_i64().unwrap() - 60000);
 
-                    // 마지막으로 뜯긴 시간에서 뒤로 5분 범위
-                    let range_time = convert_time(json["lastUpdated"].as_i64().unwrap() + 300000);
+                    // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
+                    let range_time = convert_time(json["lastUpdated"].as_i64().unwrap() + 60000);
 
-                    let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
+                    let sql = format!("SELECT created_at,display_name FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
                     let mut stmt = conn.prepare(&sql)?;
 
                     let total_user = Rc::new(Cell::new(0));
                     let result = stmt.query_map([], |row| {
                         let total_user = Rc::clone(&total_user);
                         total_user.set(total_user.get() + 1);
+
+                        let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+                        let mut user_id: String = String::new();
+                        for value in file_json {
+                            let created_at: String = row.get(0).unwrap();
+                            let display_name: String = row.get(1).unwrap();
+
+                            if value.created_at == created_at && value.display_name == display_name {
+                                user_id = value.user_id;
+                                break;
+                            }
+                        }
+
                         Ok(UserData {
                             created_at: row.get(0)?,
                             display_name: row.get(1)?,
-                            user_id: row.get(2)?,
+                            user_id,
                         })
                     })?;
 
                     let user_progress = m.add(ProgressBar::new(total_user.get()));
                     user_progress.set_style(sty.clone());
-                    user_progress.set_message("User ");
 
                     if !ripper_path.exists() {
                         let map = Map::new();
@@ -523,12 +563,12 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
 
                     for value in result {
                         let data = value;
-                        let name = data.unwrap().display_name;
+                        let name = data?.display_name;
 
                         if json.contains_key(&name) {
                             json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
                         } else {
-                            json.insert(name, Value::Number("0".parse().unwrap()));
+                            json.insert(name, Value::Number("0".parse()?));
                         }
 
                         user_progress.inc(1);
@@ -538,7 +578,6 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            avatar_progress.set_message(format!("{}번째 아바타", avatar_total.get()));
             avatar_progress.inc(1);
         }
 
@@ -551,7 +590,7 @@ fn search_store(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn check_log(file_path: &str) {
+fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(file) = File::open(file_path) {
         let reader = BufReader::new(file);
         let mut paragraph = String::new();
@@ -574,24 +613,79 @@ fn check_log(file_path: &str) {
 
         if !paragraph.is_empty() {
             let pattern = r"OnPlayerJoined\s+(\w+)";
-            let re = Regex::new(pattern).unwrap();
+            let re = Regex::new(pattern)?;
 
             if let Some(captures) = re.captures(paragraph.trim()) {
                 if let Some(word_after) = captures.get(1) {
-                    // 확인
-                    // let json = get_info_from_server(word_after.as_str().to_string());
+                    let target_name = word_after.clone().as_str().to_string();
+
+                    let pb = m.add(ProgressBar::new(1));
+                    let style = ProgressStyle::with_template("{spinner} {wide_msg}").unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+                    pb.set_style(style);
+                    pb.set_message(format!("{} - 유저 확인중...", target_name));
+
+                    let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+                    let exists = file_json.iter().find(|a| target_name == a.display_name);
+                    if exists.is_none() {
+                        pb.set_message(format!("{} - 서버에서 검색중...", target_name));
+                        let json = get_info_from_server(word_after.as_str().to_string(), &pb);
+
+                        let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+                        let conn = Connection::open(database_path).unwrap();
+
+                        let mut user_list: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+                        let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).unwrap();
+                        let result = select_query.query_map([], |row| {
+                            Ok(UserData {
+                                created_at: row.get(0)?,
+                                display_name: json[0]["displayName"].to_string().replace("\"", ""),
+                                user_id: json[0]["id"].to_string().replace("\"", ""),
+                            })
+                        }).unwrap();
+
+                        for data in result {
+                            user_list.push(data.unwrap());
+                            break;
+                        }
+
+                        let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
+                        fs::write(ids, serde_json::to_string(&user_list).unwrap()).unwrap();
+                    } else {
+                        pb.set_message(format!("{} - 이미 등록된 유저", target_name));
+                    }
+                    pb.set_message(format!("{} - 확인중...", target_name));
+
+                    thread::spawn(move || {
+                        thread::sleep(Duration::from_secs(30));
+
+                        let user_id_file_path = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.txt");
+                        let mut file = File::open(user_id_file_path).unwrap();
+                        let mut user_id = String::new();
+                        file.read_to_string(&mut user_id).unwrap();
+
+                        let ripper_path = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
+                        let mut file = File::open(ripper_path).unwrap();
+                        let mut ripper = String::new();
+                        file.read_to_string(&mut ripper).unwrap();
+                        let map: Map<String, Value> = serde_json::from_str(&*ripper).unwrap();
+
+                        let result = check_current_count(&ripper);
+                        pb.finish_and_clear();
+                        if result {
+                            let count = map.get(&*target_name).unwrap().as_u64().unwrap();
+                            println!("{} 유저가 입장했을 때 뜯겼습니다. 현재 이 유저의 감지 횟수는 {}회.", target_name, count + 1);
+                        }
+                    });
                 }
-            } else {
-                println!("No match found.");
             }
         }
-    } else {
-        println!("Failed to open the file");
     }
+
+    Ok(())
 }
 
-fn check_current_count(user_id: &str) {
-    fn set_params(page: &str, user_id: &str) -> [(String, String); 7] {
+fn check_current_count(user_id: &str) -> bool {
+    fn set_params(page: u32, user_id: &str) -> [(String, String); 7] {
         return [
             ("category".to_string(), "authorid".to_string()),
             ("page".to_string(), page.to_string()),
@@ -613,50 +707,58 @@ fn check_current_count(user_id: &str) {
     let ua = spoof_ua();
 
     let response = client.get(API_URL)
-        .form(&set_params("1", user_id))
+        .form(&set_params(1, user_id))
         .header(USER_AGENT, ua)
         .send()
         .unwrap();
     if response.status().is_success() {
         let data: AvatarList = serde_json::from_str(&*response.text().unwrap()).unwrap();
         count = data.count;
-        let avatars = data.avatars;
 
         // 아바타가 1개라도 뜯겼을 경우
         if data.count != 0 {
             // 모든 페이지를 돌아가며 아바타의 ident 값을 확인한다
-            for _ in 1..=data.pages {
-                for avatar in avatars.iter() {
-                    idents.push(avatar.ident.clone());
-                }
-            }
-            // 모든 ident 값을 돌아가며 확인한다.
-            let idents_clone = idents.clone();
-            let cpu_thread = available_parallelism().unwrap().get();
-            let pool = ThreadPoolBuilder::new().num_threads(cpu_thread).build().unwrap();
+            for page in 1..=data.pages {
+                let response = client.get(API_URL)
+                    .form(&set_params(page, user_id))
+                    .header(USER_AGENT, ua)
+                    .send()
+                    .unwrap();
+                if response.status().is_success() {
+                    let data: AvatarList = serde_json::from_str(&*response.text().unwrap()).unwrap();
+                    let avatars = data.avatars;
 
-            // 브챗 서버와 달리 리퍼 스토어는 제한이 없으므로 멀티 스레드로 한꺼번에 긁어오자
-            pool.install(|| {
-                for ident in idents_clone {
-                    let client = Client::new();
-                    let response = client.get(API_DETAIL_URL)
-                        .form(&[("ident", ident)])
-                        .header(USER_AGENT, ua)
-                        .send()
-                        .unwrap();
-                    if response.status().is_success() {
-                        let data: Item = serde_json::from_str(&*response.text().unwrap()).unwrap();
-                        let name = data.name;
-                        let created = data.pc.created;
-                        let added = data.pc.dateAdded;
-                        let updated = data.pc.lastUpdated;
-                        let result = AvatarData { name, created, added, updated };
-                        avatar_list.push(result);
+                    for avatar in avatars.iter() {
+                        idents.push(avatar.ident.clone());
+
+                        // 모든 ident 값을 돌아가며 확인한다.
+                        let idents_clone = idents.clone();
+                        let cpu_thread = available_parallelism().unwrap().get();
+                        let pool = ThreadPoolBuilder::new().num_threads(cpu_thread).build().unwrap();
+
+                        // 브챗 서버와 달리 리퍼 스토어는 제한이 없으므로 멀티 스레드로 한꺼번에 긁어오자
+                        pool.install(|| {
+                            for ident in idents_clone {
+                                let client = Client::new();
+                                let response = client.get(API_DETAIL_URL)
+                                    .form(&[("ident", ident)])
+                                    .header(USER_AGENT, ua)
+                                    .send()
+                                    .unwrap();
+                                if response.status().is_success() {
+                                    let data: Item = serde_json::from_str(&*response.text().unwrap()).unwrap();
+                                    let name = data.name;
+                                    let created = data.pc.created;
+                                    let added = data.pc.dateAdded;
+                                    let updated = data.pc.lastUpdated;
+                                    let result = AvatarData { name, created, added, updated };
+                                    avatar_list.push(result);
+                                } else {}
+                            }
+                        })
                     }
                 }
-            })
-
-            // 완료
+            }
         }
 
         // 저장 되어있는걸 불러오고 비교하기
@@ -666,8 +768,15 @@ fn check_current_count(user_id: &str) {
         } else {
             let data: SaveData = serde_json::from_reader(File::open(path.clone()).unwrap()).unwrap();
             if count != data.count {
-                // TODO 이 인간은 한번도 뜯기지 않은 아바타가 드디어 뜯겨버렸다. 라는 코드를 쓰자
-                println!("아바타가 새로 뜯겼습니다.")
+                println!("아바타가 새로 뜯겼습니다.");
+                true;
+            } else {
+                for value in data.avatar_list {
+                    if value.updated != avatar_list.iter().find(|a| a.name == value.name).unwrap().updated {
+                        println!("{} 아바타가 또 뜯겼습니다.", value.name);
+                        true;
+                    }
+                }
             }
         }
 
@@ -676,17 +785,11 @@ fn check_current_count(user_id: &str) {
         let file = File::open(path).unwrap();
         serde_json::to_writer(file, &save).unwrap();
     }
+
+    false
 }
 
-fn show_logo() {
-    println!("          ___       __     __   __   ___  __  ");
-    println!(" /\\  |\\ |  |  | __ |__) | |__) |__) |__  |__) ");
-    println!("/~~\\ | \\|  |  |    |  \\ | |    |    |___ |  \\ ");
-    println!("                                              ");
-}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    show_logo();
-
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper"))?;
 
     let auth_token = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
@@ -729,7 +832,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut file = File::open(user_id.clone())?;
         let mut text = String::new();
         file.read_to_string(&mut text)?;
-        search_store(&text)?;
+        search_store_old_log(&text)?;
     }
 
     if auth_token.exists() && user_json.exists() && user_id.exists() && checked.exists() {
@@ -766,10 +869,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut watcher: RecommendedWatcher = Watcher::new(tx, Config::default()).unwrap();
         watcher.watch(PathBuf::from(path.clone()).as_path(), RecursiveMode::NonRecursive).unwrap();
 
+        let m = MultiProgress::new();
+
         loop {
             match rx.recv() {
                 Ok(_) => {
-                    check_log(String::from(path.clone()).as_str());
+                    check_log(String::from(path.clone()).as_str(), &m)?;
                 }
                 Err(e) => println!("watch error: {:?}", e),
             }

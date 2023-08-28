@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct UserData {
     pub created_at: String,
     pub display_name: String,
-    pub user_id: Option<String>,
+    pub user_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
