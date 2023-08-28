@@ -614,7 +614,11 @@ fn print_author() {
 }
 
 fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
-    let response = reqwest::blocking::get("https://api.github.com/repos/kieaer/Anti-ripper/releases/latest")?;
+    let client = Client::new();
+    let response = client.get("https://api.github.com/repos/kieaer/Anti-ripper/releases/latest")
+        .header(USER_AGENT, PROGRAM_USER_AGENT)
+        .send()
+        .unwrap();
 
     if response.status().is_success() {
         let release: serde_json::Value = response.json()?;
@@ -625,6 +629,8 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
             println!("{} 버전이 나왔습니다. (현재 {} 버전)", tag_name, build::PKG_VERSION);
             println!("== 업데이트 내용");
             println!("{}", description);
+        } else {
+            println!("현재 최신 버전입니다.");
         }
     } else {
         println!("Failed to fetch release information");
