@@ -23,6 +23,7 @@ use regex::Regex;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
+use rpassword::read_password;
 use rusqlite::Connection;
 use serde_json::{json, Map, Number, Value};
 use text_io::read;
@@ -48,10 +49,10 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         // 로그인
-        println!("아이디를 입력 해 주세요");
+        print!("아이디: ");
         let id: String = read!();
-        println!("비밀번호를 입력 해 주세요");
-        let pw: String = read!();
+        print!("비밀번호: ");
+        let pw: String = read_password().unwrap();
 
         // 로그인 Header 생성
         let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw))))?;
@@ -60,55 +61,60 @@ fn login() -> Result<(), Box<dyn std::error::Error>> {
 
         // 아이디/비밀번호로 로그인 시도
         let mut login_header = HeaderMap::new();
-        login_header.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
+        login_header.insert(USER_AGENT, PROGRAM_USER_AGENT.parse()?);
         login_header.insert(AUTHORIZATION, account_auth_header);
-        let login_get_response = client.get(LOGIN_URL).headers(login_header).send()?;
+        let login_get_response = client.get(LOGIN_URL).headers(login_header.clone()).send()?;
+        let cloned = client.get(LOGIN_URL).headers(login_header).send()?;
 
         if login_get_response.status().is_success() {
-            let token_cookie = login_get_response.cookies();
+            let otp_type = cloned.text().unwrap().contains("totp");
 
             println!("2단계 인증 코드 6자리를 입력하세요. 인증 앱 또는 이메일을 확인하시면 됩니다.");
-            let code: String = read!();
-            let mut map = HashMap::new();
-            map.insert("code", code);
+            loop {
+                let token_cookie = login_get_response.cookies();
+                let code: String = read!();
+                let mut map = HashMap::new();
+                map.insert("code", code);
 
-            let mut post_headers = HeaderMap::new();
-            post_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
-            post_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie))?);
+                let mut post_headers = HeaderMap::new();
+                post_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
+                post_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie))?);
 
-            // 2단계 인증이 인증 앱인지 이메일 인증인지 확인
-            let mut post_request: RequestBuilder;
-            if login_get_response.text().unwrap().contains("totp") {
-                post_request = client.post(TOTP_URL).headers(post_headers);
-            } else {
-                post_request = client.post(EMAIL_URL).headers(post_headers);
-            };
+                // 2단계 인증이 인증 앱인지 이메일 인증인지 확인
+                let mut post_request: RequestBuilder;
+                if otp_type {
+                    post_request = client.post(TOTP_URL).headers(post_headers);
+                } else {
+                    post_request = client.post(EMAIL_URL).headers(post_headers);
+                };
 
-            post_request = post_request.json(&map);
+                post_request = post_request.json(&map);
 
-            let post_response = post_request.send()?;
+                let post_response = post_request.send()?;
 
-            if post_response.status().is_success() {
-                let token_cookie = post_response.cookies();
-                let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw))))?;
+                if post_response.status().is_success() {
+                    let token_cookie = post_response.cookies();
+                    let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw))))?;
 
-                let mut token_login_headers = HeaderMap::new();
-                token_login_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
-                token_login_headers.insert(AUTHORIZATION, account_auth_header);
-                token_login_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie))?);
+                    let mut token_login_headers = HeaderMap::new();
+                    token_login_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
+                    token_login_headers.insert(AUTHORIZATION, account_auth_header);
+                    token_login_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie))?);
 
-                let token_login = client.get(LOGIN_URL).headers(token_login_headers).send()?;
+                    let token_login = client.get(LOGIN_URL).headers(token_login_headers).send()?;
 
-                if token_login.status().is_success() {
-                    let data = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
-                    fs::write(data, &filter_cookie(token_login.cookies()))?;
-                    println!("로그인 성공");
-                    break;
+                    if token_login.status().is_success() {
+                        let data = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
+                        fs::write(data, &filter_cookie(token_login.cookies()))?;
+                        println!("로그인 성공");
+                        break;
+                    }
+                } else {
+                    println!("2단계 인증 코드가 맞지 않습니다!");
+                    Err("Wrong 2-FA Code")?;
                 }
-            } else {
-                println!("2단계 인증 코드가 맞지 않습니다!");
-                Err("Wrong 2-FA Code")?;
             }
+            break;
         } else {
             println!("아이디 또는 비밀번호가 틀렸습니다. 다시 입력 해 주세요.");
             Err("Wrong ID or Password")?;
@@ -672,7 +678,15 @@ fn check_current_count(user_id: &str) {
     }
 }
 
+fn show_logo() {
+    println!("          ___       __     __   __   ___  __  ");
+    println!(" /\\  |\\ |  |  | __ |__) | |__) |__) |__  |__) ");
+    println!("/~~\\ | \\|  |  |    |  \\ | |    |    |___ |  \\ ");
+    println!("                                              ");
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    show_logo();
+
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper"))?;
 
     let auth_token = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
