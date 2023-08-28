@@ -22,6 +22,7 @@ use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT}
 use rpassword::read_password;
 use rusqlite::Connection;
 use serde_json::{json, Map, Number, Value};
+use shadow_rs::shadow;
 use text_io::read;
 use ua_generator::ua::spoof_ua;
 
@@ -602,7 +603,22 @@ fn check_current_count(user_id: &str) -> bool {
     false
 }
 
+shadow!(BUILD);
+
+fn print_author() {
+    println!("Anti-ripper 1.0");
+    println!("빌드 시간: {}", BUILD.built_time_fmt("%Y-%m-%d %H:%M:%S"));
+
+    println!("Anti-ripper 1.0");
+    println!("");
+    println!("제작자: 키에르");
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    print_author();
+
+    Ok(());
+
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper"))?;
 
     let auth_token = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
