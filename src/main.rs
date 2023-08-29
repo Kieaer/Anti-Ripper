@@ -683,7 +683,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?).unwrap_or_else(|_| {
+    let _: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?).unwrap_or_else(|_| {
         fs::write(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"), "[]").unwrap();
         fs::remove_file(config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt")).unwrap();
         serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json")).unwrap()).unwrap()
