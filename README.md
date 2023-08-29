@@ -1,6 +1,6 @@
 # Anti-Ripper
 ![GitHub all releases](https://img.shields.io/github/downloads/kieaer/Anti-Ripper/total?style=flat-square)
-![GitHub release (latest by date)](https://img.shields.io/github/downloads/Anti-Ripper/essentials/latest/total?style=flat-square)<br>
+![GitHub release (latest by date)](https://img.shields.io/github/downloads/kieaer/Anti-Ripper/latest/total?style=flat-square)<br>
 
 리퍼충들의 횡포를 참지 못한 개발자가 만든 리퍼충 감지 프로그램
 
