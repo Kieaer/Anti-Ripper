@@ -608,7 +608,7 @@ shadow!(build);
 fn print_author() {
     println!("Anti-ripper {} / {} / {}", build::PKG_VERSION, build::RUST_VERSION, build::BUILD_OS);
     println!("빌드 날짜: {}", build::BUILD_TIME);
-    println!("");
+    println!();
     println!("제작자: 키에르");
     println!("Github: https://github.com/kieaer/Anti-Ripper");
 }
@@ -621,19 +621,23 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     if response.status().is_success() {
-        let release: serde_json::Value = response.json()?;
+        let release: Value = response.json()?;
         let tag_name = release["tag_name"].as_str().unwrap_or("Unknown");
         let description = release["body"].as_str().unwrap_or("No description available");
+        let last_version = release["html_url"].as_str().unwrap_or("Unknown");
 
         if tag_name != build::PKG_VERSION {
             println!("{} 버전이 나왔습니다. (현재 {} 버전)", tag_name, build::PKG_VERSION);
+            println!("다운로드 링크: {}", last_version);
+            println!("!! 절대로 https://github.com/kieaer 이외의 사이트에서 다운로드 하지 마세요.");
+            println!("!! 소스가 공개되어 있기 때문에 다른 곳에서 다운로드 할 경우 위험에 노출될 수 있습니다.");
             println!("== 업데이트 내용");
             println!("{}", description);
         } else {
             println!("현재 최신 버전입니다.");
         }
     } else {
-        println!("Failed to fetch release information");
+        println!("업데이트 정보를 가져오는데 실패 했습니다.");
     }
 
     Ok(())
