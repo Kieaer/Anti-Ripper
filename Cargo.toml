@@ -23,6 +23,7 @@ serde_json = "1.0.105"
 shadow-rs = "0.23.0"
 text_io = "0.1.12"
 ua_generator = "0.3.5"
+winapi = { version = "0.3.9", features = ["tlhelp32", "processthreadsapi"] }
 
 [build-dependencies]
 shadow-rs = "0.23.0"

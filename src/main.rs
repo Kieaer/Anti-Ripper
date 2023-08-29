@@ -1,4 +1,4 @@
-use std::{fs, thread};
+use std::{fs, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
@@ -25,6 +25,8 @@ use serde_json::{json, Map, Number, Value};
 use shadow_rs::shadow;
 use text_io::read;
 use ua_generator::ua::spoof_ua;
+use winapi::shared::minwindef::{DWORD, MAX_PATH};
+use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32};
 
 use crate::library::convert_time;
 use crate::structs::{AvatarData, AvatarList, Item, SaveData, SearchData, UserData};
@@ -693,47 +695,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if auth_token.exists() && user_json.exists() && user_id.exists() && checked.exists() {
-        let dir_path = home_dir().unwrap().join("AppData").join("LocalLow").join("VRChat");
-        let specific_word = "output_log";
-        let mut path: String = String::new();
+        fn is_process_running(target_process_name: &str) -> bool {
+            let snapshot = unsafe { CreateToolhelp32Snapshot(0x00000002, 0) };
 
-        if let Ok(entries) = fs::read_dir(dir_path) {
-            let mut earliest_creation_time: Option<std::time::SystemTime> = None;
-            let mut earliest_file_path: Option<String> = None;
+            if snapshot != ptr::null_mut() {
+                let mut entry: PROCESSENTRY32 = PROCESSENTRY32 {
+                    dwSize: std::mem::size_of::<PROCESSENTRY32>() as DWORD,
+                    cntUsage: 0,
+                    th32ProcessID: 0,
+                    th32DefaultHeapID: 0,
+                    th32ModuleID: 0,
+                    cntThreads: 0,
+                    th32ParentProcessID: 0,
+                    pcPriClassBase: 0,
+                    dwFlags: 0,
+                    szExeFile: [0; MAX_PATH],
+                };
 
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    if let Some(file_name) = entry.file_name().to_str() {
-                        if file_name.contains(specific_word) {
-                            let metadata = entry.metadata().unwrap();
-                            if let Ok(creation_time) = metadata.created() {
-                                if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
-                                    earliest_creation_time = Some(creation_time);
-                                    earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                if unsafe { Process32First(snapshot, &mut entry) } != 0 {
+                    loop {
+                        let process_name = entry.szExeFile.iter()
+                            .take_while(|&&c| c != 0)
+                            .map(|&c| c as u8 as char)
+                            .collect::<String>();
+
+                        if process_name.to_lowercase() == target_process_name.to_lowercase() {
+                            return true;
+                        }
+
+                        if unsafe { Process32Next(snapshot, &mut entry) } == 0 {
+                            break;
+                        }
+                    }
+                }
+
+                unsafe { winapi::um::handleapi::CloseHandle(snapshot) };
+            }
+
+            false
+        }
+
+        loop {
+            let dir_path = home_dir().unwrap().join("AppData").join("LocalLow").join("VRChat");
+            let specific_word = "output_log";
+            let mut path: String = String::new();
+
+            if let Ok(entries) = fs::read_dir(dir_path) {
+                loop {
+                    if is_process_running("VRChat.exe") {
+                        break;
+                    }
+
+                    thread::sleep(Duration::from_secs(30));
+                }
+
+                let mut earliest_creation_time: Option<std::time::SystemTime> = None;
+                let mut earliest_file_path: Option<String> = None;
+
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        if let Some(file_name) = entry.file_name().to_str() {
+                            if file_name.contains(specific_word) {
+                                let metadata = entry.metadata().unwrap();
+                                if let Ok(creation_time) = metadata.created() {
+                                    if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
+                                        earliest_creation_time = Some(creation_time);
+                                        earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            if let Some(file_path) = earliest_file_path {
-                path = file_path;
-            }
-        }
-
-        let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = Watcher::new(tx, Config::default()).unwrap();
-        watcher.watch(PathBuf::from(path.clone()).as_path(), RecursiveMode::NonRecursive).unwrap();
-
-        let m = MultiProgress::new();
-
-        loop {
-            match rx.recv() {
-                Ok(_) => {
-                    check_log(String::from(path.clone()).as_str(), &m)?;
+                if let Some(file_path) = earliest_file_path {
+                    path = file_path;
                 }
-                Err(e) => println!("watch error: {:?}", e),
+            }
+
+            let (tx, rx) = channel();
+            let mut watcher: RecommendedWatcher = Watcher::new(tx, Config::default()).unwrap();
+            watcher.watch(PathBuf::from(path.clone()).as_path(), RecursiveMode::NonRecursive).unwrap();
+
+            let m = MultiProgress::new();
+
+            loop {
+                match rx.recv() {
+                    Ok(_) => {
+                        check_log(String::from(path.clone()).as_str(), &m)?;
+                    }
+                    Err(e) => println!("watch error: {:?}", e),
+                }
+                if !is_process_running("VRChat.exe") {
+                    break;
+                }
             }
         }
     }
