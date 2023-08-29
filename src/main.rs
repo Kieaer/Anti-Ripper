@@ -2,7 +2,7 @@ use std::{fs, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, stdin, Write};
+use std::io::{BufRead, BufReader, Read, stdin, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
@@ -21,7 +21,7 @@ use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
 use rpassword::read_password;
 use rusqlite::Connection;
-use serde_json::{json, Map, Number, Value};
+use serde_json::{json, Map, Value};
 use shadow_rs::shadow;
 use text_io::read;
 use ua_generator::ua::spoof_ua;
@@ -236,7 +236,7 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                             }
 
                             if ripper_json.iter().find(|a| a.name == name).is_none() {
-                                ripper_json.push(RipperData{name, count: 0 })
+                                ripper_json.push(RipperData { name, count: 0 })
                             }
 
                             let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
@@ -276,7 +276,7 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                                 }
 
                                 if ripper_json.iter().find(|a| a.name == name).is_none() {
-                                    ripper_json.push(RipperData{name, count: 0 })
+                                    ripper_json.push(RipperData { name, count: 0 })
                                 }
 
                                 let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
@@ -683,8 +683,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?).unwrap_or_else(|_| {
+        fs::write(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"), "[]").unwrap();
+        fs::remove_file(config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt")).unwrap();
+        serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json")).unwrap()).unwrap()
+    });
+
     // 리퍼 스토어에서 정보 확인
-    if auth_token.exists() && user_json.exists() && user_id.exists() {
+    if auth_token.exists() && user_json.exists() && user_id.exists() && !checked.exists() {
         let mut file = File::open(user_id.clone())?;
         let mut text = String::new();
         file.read_to_string(&mut text)?;
@@ -806,7 +812,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{} - {}회", value.name, value.count);
                         }
                     }
-                },
+                }
                 _ => {}
             }
         }
