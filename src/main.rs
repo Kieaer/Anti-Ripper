@@ -2,7 +2,7 @@ use std::{fs, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, stdin, Write};
+use std::io::{BufRead, BufReader, Read, stdin};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
@@ -10,7 +10,6 @@ use std::thread::available_parallelism;
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose};
-use chrono::TimeZone;
 use dirs::{config_dir, home_dir};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
@@ -19,6 +18,7 @@ use regex::Regex;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
+use rodio::{Decoder, OutputStream, Source};
 use rpassword::read_password;
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
@@ -184,7 +184,6 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                 }
 
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-                let ripper_path = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
                 let conn = Connection::open(database_path)?;
 
                 for ident in idents {
@@ -486,6 +485,7 @@ fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::erro
                         pb.finish_and_clear();
                         if result {
                             let count = map.get(&*target_name).unwrap().as_u64().unwrap();
+                            play_audio();
                             println!("{} 유저가 입장했을 때 뜯겼습니다. 현재 이 유저의 감지 횟수는 {}회.", target_name, count + 1);
                         }
                     });
@@ -640,6 +640,13 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn play_audio() {
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let file = BufReader::new(File::open("alert.wav").unwrap());
+    let source = Decoder::new(file).unwrap();
+    stream_handle.play_raw(source.convert_samples()).unwrap();
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
