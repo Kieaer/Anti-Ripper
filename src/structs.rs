@@ -98,3 +98,9 @@ pub struct Item {
     pub pc: PcInfo,
     pub moreFromAuthor: MoreFromAuthor,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RipperData {
+    pub name: String,
+    pub count: u32,
+}

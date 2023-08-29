@@ -2,7 +2,7 @@ use std::{fs, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, stdin, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
@@ -29,7 +29,7 @@ use winapi::shared::minwindef::{DWORD, MAX_PATH};
 use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32};
 
 use crate::library::convert_time;
-use crate::structs::{AvatarData, AvatarList, Item, SaveData, SearchData, UserData};
+use crate::structs::{AvatarData, AvatarList, Item, RipperData, SaveData, SearchData, UserData};
 
 mod structs;
 mod library;
@@ -217,28 +217,30 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                             })
                         })?;
 
-                        if !ripper_path.exists() {
-                            let map = Map::new();
-                            let mut writer = BufWriter::new(File::create(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json").to_str().unwrap())?);
-                            serde_json::to_writer(&mut writer, &map)?;
-                            writer.flush()?;
+                        if !config_dir().unwrap().join("VRCX/Anti-Ripper/ripper_json").exists() {
+                            fs::write(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"), "[]")?;
                         }
-
-                        let mut file = File::open(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"))?;
-                        let mut contents = String::new();
-                        file.read_to_string(&mut contents)?;
-
-                        let mut json: Map<String, Value> = serde_json::from_str(&contents)?;
 
                         for value in result {
                             let data = value;
                             let name = data?.display_name;
 
-                            if json.contains_key(&name) {
-                                json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
-                            } else {
-                                json.insert(name, Value::Number(Number::from(0)));
+                            let mut ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?).unwrap_or_else(|_| {
+                                fs::write(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"), "[]").unwrap();
+                                serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json")).unwrap()).unwrap()
+                            });
+                            for mut r in ripper_json.clone() {
+                                if r.name == name {
+                                    r.count += 1;
+                                }
                             }
+
+                            if ripper_json.iter().find(|a| a.name == name).is_none() {
+                                ripper_json.push(RipperData{name, count: 0 })
+                            }
+
+                            let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
+                            fs::write(ids, serde_json::to_string(&ripper_json)?)?;
                         }
 
                         if !json["lastUpdated"].is_null() {
@@ -262,28 +264,23 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                                 })
                             })?;
 
-                            if !ripper_path.exists() {
-                                let map = Map::new();
-                                let mut writer = BufWriter::new(File::create(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json").to_str().unwrap())?);
-                                serde_json::to_writer(&mut writer, &map)?;
-                                writer.flush()?;
-                            }
-
-                            let mut file = File::open(config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json"))?;
-                            let mut contents = String::new();
-                            file.read_to_string(&mut contents)?;
-
-                            let mut json: Map<String, Value> = serde_json::from_str(&contents)?;
-
                             for value in result {
                                 let data = value;
                                 let name = data?.display_name;
 
-                                if json.contains_key(&name) {
-                                    json.insert(name.clone(), Value::from(Number::from(json.get(&*name).unwrap().as_i64().unwrap() + 1)));
-                                } else {
-                                    json.insert(name, Value::Number("0".parse()?));
+                                let mut ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?)?;
+                                for mut r in ripper_json.clone() {
+                                    if r.name == name {
+                                        r.count += 1;
+                                    }
                                 }
+
+                                if ripper_json.iter().find(|a| a.name == name).is_none() {
+                                    ripper_json.push(RipperData{name, count: 0 })
+                                }
+
+                                let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/ripper.json");
+                                fs::write(ids, serde_json::to_string(&ripper_json)?)?;
                             }
                         }
 
@@ -735,60 +732,82 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             false
         }
 
-        loop {
-            let dir_path = home_dir().unwrap().join("AppData").join("LocalLow").join("VRChat");
-            let specific_word = "output_log";
-            let mut path: String = String::new();
+        thread::spawn(|| {
+            loop {
+                let dir_path = home_dir().unwrap().join("AppData").join("LocalLow").join("VRChat");
+                let specific_word = "output_log";
+                let mut path: String = String::new();
 
-            if let Ok(entries) = fs::read_dir(dir_path) {
-                loop {
-                    if is_process_running("VRChat.exe") {
-                        break;
+                if let Ok(entries) = fs::read_dir(dir_path) {
+                    loop {
+                        if is_process_running("VRChat.exe") {
+                            break;
+                        }
+
+                        thread::sleep(Duration::from_secs(30));
                     }
 
-                    thread::sleep(Duration::from_secs(30));
-                }
+                    let mut earliest_creation_time: Option<std::time::SystemTime> = None;
+                    let mut earliest_file_path: Option<String> = None;
 
-                let mut earliest_creation_time: Option<std::time::SystemTime> = None;
-                let mut earliest_file_path: Option<String> = None;
-
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        if let Some(file_name) = entry.file_name().to_str() {
-                            if file_name.contains(specific_word) {
-                                let metadata = entry.metadata().unwrap();
-                                if let Ok(creation_time) = metadata.created() {
-                                    if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
-                                        earliest_creation_time = Some(creation_time);
-                                        earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                    for entry in entries {
+                        if let Ok(entry) = entry {
+                            if let Some(file_name) = entry.file_name().to_str() {
+                                if file_name.contains(specific_word) {
+                                    let metadata = entry.metadata().unwrap();
+                                    if let Ok(creation_time) = metadata.created() {
+                                        if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
+                                            earliest_creation_time = Some(creation_time);
+                                            earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+
+                    if let Some(file_path) = earliest_file_path {
+                        path = file_path;
+                    }
                 }
 
-                if let Some(file_path) = earliest_file_path {
-                    path = file_path;
+                let (tx, rx) = channel();
+                let mut watcher: RecommendedWatcher = Watcher::new(tx, Config::default()).unwrap();
+                watcher.watch(PathBuf::from(path.clone()).as_path(), RecursiveMode::NonRecursive).unwrap();
+
+                let m = MultiProgress::new();
+
+                loop {
+                    match rx.recv() {
+                        Ok(_) => {
+                            check_log(String::from(path.clone()).as_str(), &m).expect("읽기 오류");
+                        }
+                        Err(e) => println!("watch error: {:?}", e),
+                    }
+                    if !is_process_running("VRChat.exe") {
+                        break;
+                    }
                 }
             }
+        });
 
-            let (tx, rx) = channel();
-            let mut watcher: RecommendedWatcher = Watcher::new(tx, Config::default()).unwrap();
-            watcher.watch(PathBuf::from(path.clone()).as_path(), RecursiveMode::NonRecursive).unwrap();
+        println!("실행 완료. a를 눌러 카운트 확인");
 
-            let m = MultiProgress::new();
+        loop {
+            let mut input = String::new();
+            stdin().read_line(&mut input).expect("Failed to read input");
 
-            loop {
-                match rx.recv() {
-                    Ok(_) => {
-                        check_log(String::from(path.clone()).as_str(), &m)?;
+            match input.trim() {
+                "a" => {
+                    let ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?)?;
+
+                    for value in ripper_json {
+                        if value.count > 1 {
+                            println!("{} - {}회", value.name, value.count);
+                        }
                     }
-                    Err(e) => println!("watch error: {:?}", e),
-                }
-                if !is_process_running("VRChat.exe") {
-                    break;
-                }
+                },
+                _ => {}
             }
         }
     }
