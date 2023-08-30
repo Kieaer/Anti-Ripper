@@ -1,9 +1,11 @@
 use std::fs;
 use std::fs::File;
 use std::io::Read;
+
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use chrono::format::{DelayedFormat, StrftimeItems};
 use dirs::config_dir;
+
 use crate::structs::{RipperData, UserData};
 
 pub fn convert_time<'a>(value: u64) -> DelayedFormat<StrftimeItems<'a>> {

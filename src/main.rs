@@ -2,7 +2,7 @@ use std::{fs, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, stdin};
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Command, exit};
 use std::rc::Rc;
@@ -21,7 +21,6 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
 use rodio::{Decoder, OutputStream, Source};
-use rpassword::read_password;
 use rusqlite::Connection;
 use self_update::cargo_crate_version;
 use serde_json::{json, Value};
@@ -32,7 +31,7 @@ use winapi::shared::minwindef::{DWORD, MAX_PATH};
 use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32};
 
 use crate::library::{convert_time, get_id, get_ripper, get_user, set_ripper, set_user};
-use crate::structs::{AvatarData, AvatarList, AvatarItem, PcInfo, RipperData, SaveData, SearchData, UserData};
+use crate::structs::{AvatarData, AvatarItem, AvatarList, RipperData, SaveData, SearchData, UserData};
 
 mod structs;
 mod library;
@@ -631,7 +630,7 @@ fn play_audio() {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_author();
-    // auto_update().expect("업데이트 확인 오류");
+    auto_update().expect("업데이트 확인 오류");
 
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper")).expect("폴더 생성 오류");
 
