@@ -342,6 +342,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
                 set_user(user_list);
             }
+            checked.push(value.display_name);
         }
         pb.inc(1);
     }
