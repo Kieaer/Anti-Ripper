@@ -754,11 +754,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match input.trim() {
                 "a" => {
-                    let ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json")).expect("리퍼 카운트 파일 찾기 실패")).expect("JSON 파싱 오류");
-
+                    let ripper_json = get_ripper();
+                    let user_json = get_user();
                     for value in ripper_json {
                         if value.count > 1 {
-                            println!("{} - {}회", value.name, value.count);
+                            if user_json.iter().find(|a| a.display_name == value.name).is_some() {
+                                println!("{}({}) - {}회", value.name, user_json.iter().find(|a| a.display_name == value.name).unwrap().user_id, value.count);
+                            } else {
+                                println!("{} - {}회", value.name, value.count);
+                            }
                         }
                     }
                 }
