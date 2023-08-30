@@ -54,11 +54,10 @@ fn login() {
         println!("아이디를 입력하세요");
         let id: String = read!();
         println!("비밀번호를 입력하세요");
-        let pw: String = read_password().expect("비밀번호를 입력 받는데 오류가 발생 했습니다!");
+        let pw: String = read_password().expect("비밀번호를 입력 오류");
 
         // 로그인 Header 생성
-        let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw))))
-            .expect("인증 헤더를 변환하는데 오류가 발생 했습니다!");
+        let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw)))).unwrap();
 
         let client = Client::new();
 
@@ -66,11 +65,11 @@ fn login() {
         let mut login_header = HeaderMap::new();
         login_header.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
         login_header.insert(AUTHORIZATION, account_auth_header);
-        let login_get_response = client.get(LOGIN_URL).headers(login_header.clone()).send().expect("브챗 서버에 로그인 하는데 오류가 발생 했습니다!");
-        let cloned = client.get(LOGIN_URL).headers(login_header).send().expect("브챗 서버에 로그인 하는데 오류가 발생 했습니다!");
+        let login_get_response = client.get(LOGIN_URL).headers(login_header.clone()).send().expect("브챗 로그인 오류");
+        let cloned = client.get(LOGIN_URL).headers(login_header).send().expect("브챗 로그인 오류");
 
         if login_get_response.status().is_success() {
-            let otp_type = cloned.text().expect("브챗 서버에서 다운로드 받은 데이터를 변환 할 수 없습니다!").contains("totp");
+            let otp_type = cloned.text().expect("데이터 변환 오류").contains("totp");
 
             println!("2단계 인증 코드 6자리를 입력하세요. 인증 앱 또는 이메일을 확인하시면 됩니다.");
             loop {
@@ -81,7 +80,7 @@ fn login() {
 
                 let mut post_headers = HeaderMap::new();
                 post_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
-                post_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie)).unwrap());
+                post_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie)).expect("쿠키 값 가져오기 실패"));
 
                 // 2단계 인증이 인증 앱인지 이메일 인증인지 확인
                 let mut post_request: RequestBuilder;
@@ -93,7 +92,7 @@ fn login() {
 
                 post_request = post_request.json(&map);
 
-                let post_response = post_request.send().unwrap();
+                let post_response = post_request.send().expect("브챗 2단계 로그인 오류");
 
                 if post_response.status().is_success() {
                     let token_cookie = post_response.cookies();
@@ -102,13 +101,13 @@ fn login() {
                     let mut token_login_headers = HeaderMap::new();
                     token_login_headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
                     token_login_headers.insert(AUTHORIZATION, account_auth_header);
-                    token_login_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie)).unwrap());
+                    token_login_headers.insert(COOKIE, HeaderValue::from_str(&filter_cookie(token_cookie)).expect("쿠키 값 가져오기 실패"));
 
-                    let token_login = client.get(LOGIN_URL).headers(token_login_headers).send().unwrap();
+                    let token_login = client.get(LOGIN_URL).headers(token_login_headers).send().expect("브챗 인증 토큰 로그인 오류");
 
                     if token_login.status().is_success() {
                         let data = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
-                        fs::write(data, &filter_cookie(token_login.cookies())).unwrap();
+                        fs::write(data, &filter_cookie(token_login.cookies())).expect("파일 쓰기 오류");
                         println!("로그인 성공");
                         break;
                     }
@@ -124,25 +123,25 @@ fn login() {
 }
 
 fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
-    let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).unwrap();
+    let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).expect("인증 토큰 파일 읽기 오류");
     let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n={}", user_name, 1);
     let client = Client::new();
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
-    headers.insert(COOKIE, HeaderValue::from_str(&*token).unwrap());
+    headers.insert(COOKIE, HeaderValue::from_str(&*token).expect("인증 토큰 파일 변환 오류"));
 
-    let mut response = client.get(url.clone()).headers(headers.clone()).send().unwrap();
+    let mut response = client.get(url.clone()).headers(headers.clone()).send().expect("브챗 데이터 다운로드 오류");
     while !response.status().is_success() {
         pb.set_message("브챗 서버가 과열 되었습니다! 식을 때 까지 대기중...");
         thread::sleep(Duration::from_secs(305));
-        response = client.get(url.clone()).headers(headers.clone()).send().unwrap();
+        response = client.get(url.clone()).headers(headers.clone()).send().expect("브챗 데이터 다운로드 오류");
         pb.set_message("");
     }
 
 
     return if response.status().is_success() {
-        let body = response.text().unwrap();
-        let json: Value = serde_json::from_str(&*body).unwrap();
+        let body = response.text().expect("브챗 데이터 읽기 오류");
+        let json: Value = serde_json::from_str(&*body).expect("브챗 데이터 해석 오류");
         json
     } else {
         json!({})
@@ -152,20 +151,20 @@ fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
 fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     fn put(base_time: DelayedFormat<StrftimeItems>, range_time: DelayedFormat<StrftimeItems>) {
         let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-        let conn = Connection::open(database_path).unwrap();
+        let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
         let sql = format!("SELECT created_at,display_name,user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined' BETWEEN '{}' AND '{}'", base_time, range_time);
-        let mut stmt = conn.prepare(&sql).unwrap();
+        let mut stmt = conn.prepare(&sql).expect("데이터베이스 쿼리 오류");
 
         let total_user = Rc::new(Cell::new(0));
         let result = stmt.query_map([], |row| {
             let total_user = Rc::clone(&total_user);
             total_user.set(total_user.get() + 1);
             Ok(UserData {
-                created_at: row.get(0)?,
-                display_name: row.get(1)?,
-                user_id: row.get(2)?,
+                created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
+                display_name: row.get(1).expect("데이터베이스 display_name 값 읽기 오류"),
+                user_id: row.get(2).expect("데이터베이스 user_id 값 읽기 오류"),
             })
-        }).unwrap();
+        }).expect("데이터베이스 쿼리 실행 오류");
 
         for value in result {
             let data = value;
@@ -193,14 +192,15 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
     let response = client.get(API_URL)
         .form(&params)
         .header(USER_AGENT, ua)
-        .send()?;
+        .send()
+        .expect("리퍼 스토어 데이터 요청 오류");
     if response.status().is_success() {
-        let body = response.text()?;
-        let json: Value = serde_json::from_str(&*body)?;
-        let page: u64 = json["pages"].as_u64().unwrap();
+        let body = response.text().expect("리퍼 스토어 데이터 읽기 오류");
+        let json: Value = serde_json::from_str(&*body).expect("리퍼 스토어 데이터 해석 오류");
+        let page: u64 = json["pages"].as_u64().expect("리퍼 스토어 데이터 형식 변환 오류");
 
-        let avatar_total = json["count"].as_u64().unwrap();
-        let sty = ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")?.progress_chars("##-");
+        let avatar_total = json["count"].as_u64().expect("리퍼 스토어 데이터 형식 변환 오류");
+        let sty = ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}").expect("진행바 구문 오류").progress_chars("##-");
         let avatar_progress = ProgressBar::new(avatar_total);
         avatar_progress.set_style(sty.clone());
 
@@ -209,13 +209,14 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
             let response = client.get(API_URL)
                 .form(&params)
                 .header(USER_AGENT, ua)
-                .send()?;
+                .send()
+                .expect("리퍼 스토어 데이터 요청 오류");
             if response.status().is_success() {
-                let avatars = json["avatars"].as_array().unwrap();
+                let avatars = json["avatars"].as_array().expect("리퍼 스토어 데이터 형식 변환 오류");
                 let mut idents = Vec::new();
 
                 for avatar in avatars {
-                    let avatar: SearchData = serde_json::from_value(avatar.clone())?;
+                    let avatar: SearchData = serde_json::from_value(avatar.clone()).expect("리퍼 스토어 데이터 해석 오류");
                     idents.push(avatar.ident);
                 }
 
@@ -224,9 +225,10 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                     let response = client.get(API_DETAIL_URL)
                         .form(&params)
                         .header(USER_AGENT, ua)
-                        .send()?;
+                        .send()
+                        .expect("리퍼 스토어 데이터 요청 오류");
                     if response.status().is_success() {
-                        let json: Value = serde_json::from_str(&*body)?;
+                        let json: Value = serde_json::from_str(&*body).expect("리퍼 스토어 데이터 해석 오류");
 
                         // 처음 뜯긴 시간에서 뒤로 1분 범위
                         let base_time = convert_time(json["dateAdded"].as_i64().unwrap() - 60000);
@@ -257,7 +259,7 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
     }
 
     let checked = config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt");
-    fs::write(checked, "VRCX 데이터를 사용하여 리퍼 스토어에서 뜯긴 아바타를 모두 계산 했다는 확인 파일")?;
+    fs::write(checked, "VRCX 데이터를 사용하여 리퍼 스토어에서 뜯긴 아바타를 모두 계산 했다는 확인 파일").expect("리퍼 스토어 검사 확인 파일 쓰기 오류");
 
     Ok(())
 }
@@ -265,27 +267,27 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
 fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
 
-    let conn = Connection::open(database_path)?;
-    let mut stmt = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined'")?;
+    let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
+    let mut stmt = conn.prepare("SELECT created_at, display_name, user_id FROM gamelog_join_leave WHERE type='OnPlayerJoined'").expect("데이터베이스 쿼리 오류");
     let mut ready_count = 0;
     let mut data_list: Vec<UserData> = vec![];
     let parse_data = stmt.query_map([], |row| {
         Ok(UserData {
-            created_at: row.get(0)?,
-            display_name: row.get(1)?,
-            user_id: row.get(2)?,
+            created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
+            display_name: row.get(1).expect("데이터베이스 display_name 값 읽기 오류"),
+            user_id: row.get(2).expect("데이터베이스 user_id 값 읽기 오류"),
         })
-    })?;
+    }).expect("데이터베이스 쿼리 실행 오류");
 
     for user in parse_data {
-        data_list.push(user?);
+        data_list.push(user.expect("쿼리 결과 오류"));
     }
 
     for _ in data_list.clone().into_iter() {
         ready_count += 1;
     }
 
-    let style = ProgressStyle::with_template("{msg}\n{wide_bar:.cyan/blue} {pos}/{len}")?.progress_chars("#>-");
+    let style = ProgressStyle::with_template("{msg}\n{wide_bar:.cyan/blue} {pos}/{len}").expect("진행바 구문 오류").progress_chars("#>-");
     let pb = ProgressBar::new(ready_count);
     pb.set_style(style);
 
@@ -303,7 +305,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
         if value.clone().user_id.is_empty() {
             if !checked.contains(&value.display_name) {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-                let conn = Connection::open(database_path)?;
+                let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
 
                 pb.set_message(format!("{} 유저 데이터 다운로드중...", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
 
@@ -311,17 +313,17 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
                 let mut user_list = get_user();
                 if value.display_name.clone() == json[0]["displayName"] && user_list.iter().find(|a| a.display_name == value.display_name).is_none() {
-                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"]))?;
+                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).expect("데이터베이스 쿼리 오류");
                     let result = select_query.query_map([], |row| {
                         Ok(UserData {
-                            created_at: row.get(0)?,
+                            created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
                             display_name: json[0]["displayName"].to_string().replace("\"", ""),
                             user_id: json[0]["id"].to_string().replace("\"", ""),
                         })
-                    })?;
+                    }).expect("데이터베이스 쿼리 실행 오류");
 
                     for data in result {
-                        user_list.push(data?);
+                        user_list.push(data.expect("쿼리 결과 오류"));
                         break;
                     }
 
@@ -346,7 +348,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id_done.txt");
-    fs::write(ids, "모든 ID 확인이 끝났다는걸 확인하는 파일")?;
+    fs::write(ids, "모든 ID 확인이 끝났다는걸 확인하는 파일").expect("사용자 데이터 확인 완료 파일 쓰기 오류");
     pb.finish_with_message("완료");
 
     Ok(())
@@ -375,7 +377,7 @@ fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::erro
 
         if !paragraph.is_empty() {
             let pattern = r"OnPlayerJoined\s+(\w+)";
-            let re = Regex::new(pattern)?;
+            let re = Regex::new(pattern).expect("정규식 패턴 오류");
 
             if let Some(captures) = re.captures(paragraph.trim()) {
                 if let Some(word_after) = captures.get(1) {
@@ -386,32 +388,31 @@ fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::erro
                     pb.set_style(style);
                     pb.set_message(format!("{} - 유저 확인중...", target_name));
 
-                    let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
+                    let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).expect("파일 오류")).expect("JSON 구문 오류");
                     let exists = file_json.iter().find(|a| target_name == a.display_name);
                     if exists.is_none() {
                         pb.set_message(format!("{} - 서버에서 검색중...", target_name));
                         let json = get_info_from_server(word_after.as_str().to_string(), &pb);
 
                         let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-                        let conn = Connection::open(database_path).unwrap();
+                        let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
 
-                        let mut user_list: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).unwrap()).unwrap();
-                        let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).unwrap();
+                        let mut user_list: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).expect("파일 오류")).expect("JSON 구문 오류");
+                        let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).expect("데이터베이스 쿼리 오류");
                         let result = select_query.query_map([], |row| {
                             Ok(UserData {
-                                created_at: row.get(0)?,
+                                created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
                                 display_name: json[0]["displayName"].to_string().replace("\"", ""),
                                 user_id: json[0]["id"].to_string().replace("\"", ""),
                             })
-                        }).unwrap();
+                        }).expect("데이터베이스 쿼리 실행 오류");
 
                         for data in result {
-                            user_list.push(data.unwrap());
+                            user_list.push(data.expect("쿼리 결과 오류"));
                             break;
                         }
 
-                        let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.json");
-                        fs::write(ids, serde_json::to_string(&user_list).unwrap()).unwrap();
+                        set_user(user_list);
                     } else {
                         pb.set_message(format!("{} - 이미 등록된 유저", target_name));
                     }
@@ -424,7 +425,7 @@ fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::erro
                         pb.finish_and_clear();
                         if result {
                             let mut json = get_ripper();
-                            let count = json.clone().iter().find(|a| a.name == target_name).unwrap().count;
+                            let count = json.clone().iter().find(|a| a.name == target_name).expect("JSON 파싱 오류").count;
 
                             if let Some(index) = json.iter().position(|a| a.name == target_name) {
                                 json[index].count += 1;
@@ -468,9 +469,9 @@ fn check_current_count(user_id: &str) -> bool {
         .form(&set_params(1, user_id))
         .header(USER_AGENT, ua)
         .send()
-        .unwrap();
+        .expect("리퍼 스토어 데이터 요청 오류");
     if response.status().is_success() {
-        let data: AvatarList = serde_json::from_str(&*response.text().unwrap()).unwrap();
+        let data: AvatarList = serde_json::from_str(&*response.text().expect("리퍼 스토어 데이터 읽기 오류")).expect("리퍼 스토어 데이터 형식 캐스트 오류");
         count = data.count;
 
         // 아바타가 1개라도 뜯겼을 경우
@@ -481,9 +482,9 @@ fn check_current_count(user_id: &str) -> bool {
                     .form(&set_params(page, user_id))
                     .header(USER_AGENT, ua)
                     .send()
-                    .unwrap();
+                    .expect("리퍼 스토어 데이터 요청 오류");
                 if response.status().is_success() {
-                    let data: AvatarList = serde_json::from_str(&*response.text().unwrap()).unwrap();
+                    let data: AvatarList = serde_json::from_str(&*response.text().expect("리퍼 스토어 데이터 읽기 오류")).expect("리퍼 스토어 데이터 형식 캐스트 오류");
                     let avatars = data.avatars;
 
                     for avatar in avatars.iter() {
@@ -491,8 +492,8 @@ fn check_current_count(user_id: &str) -> bool {
 
                         // 모든 ident 값을 돌아가며 확인한다.
                         let idents_clone = idents.clone();
-                        let cpu_thread = available_parallelism().unwrap().get();
-                        let pool = ThreadPoolBuilder::new().num_threads(cpu_thread).build().unwrap();
+                        let cpu_thread = available_parallelism().expect("CPU 스레드 개수 읽기 오류").get();
+                        let pool = ThreadPoolBuilder::new().num_threads(cpu_thread).build().expect("스레드 풀 생성 오류");
 
                         // 브챗 서버와 달리 리퍼 스토어는 제한이 없으므로 멀티 스레드로 한꺼번에 긁어오자
                         pool.install(|| {
@@ -502,9 +503,9 @@ fn check_current_count(user_id: &str) -> bool {
                                     .form(&[("ident", ident)])
                                     .header(USER_AGENT, ua)
                                     .send()
-                                    .unwrap();
+                                    .expect("리퍼 스토어 데이터 요청 오류");
                                 if response.status().is_success() {
-                                    let data: Item = serde_json::from_str(&*response.text().unwrap()).unwrap();
+                                    let data: Item = serde_json::from_str(&*response.text().expect("리퍼 스토어 데이터 읽기 오류")).expect("리퍼 스토어 데이터 해석 오류");
                                     let name = data.name;
                                     let created = data.pc.created;
                                     let added = data.pc.dateAdded;
@@ -522,15 +523,15 @@ fn check_current_count(user_id: &str) -> bool {
         // 저장 되어있는걸 불러오고 비교하기
         let path = config_dir().unwrap().join("VRCX/Anti-Ripper/save.json");
         if !path.clone().exists() {
-            File::create(path.clone()).unwrap();
+            File::create(path.clone()).expect("파일 생성 오류");
         } else {
-            let data: SaveData = serde_json::from_reader(File::open(path.clone()).unwrap()).unwrap();
+            let data: SaveData = serde_json::from_reader(File::open(path.clone()).expect("파일 읽기 오류")).expect("JSON 구문 해석 오류");
             if count != data.count {
                 println!("아바타가 새로 뜯겼습니다.");
                 true;
             } else {
                 for value in data.avatar_list {
-                    if value.updated != avatar_list.iter().find(|a| a.name == value.name).unwrap().updated {
+                    if value.updated != avatar_list.iter().find(|a| a.name == value.name).expect("JSON 파싱 오류").updated {
                         println!("{} 아바타가 또 뜯겼습니다.", value.name);
                         true;
                     }
@@ -540,8 +541,8 @@ fn check_current_count(user_id: &str) -> bool {
 
         // 저장
         let save = SaveData { count, idents, avatar_list };
-        let file = File::open(path).unwrap();
-        serde_json::to_writer(file, &save).unwrap();
+        let file = File::open(path).expect("파일 읽기 오류");
+        serde_json::to_writer(file, &save).expect("JSON 파일 쓰기 오류");
     }
 
     false
@@ -560,10 +561,9 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
     let response = client.get("https://api.github.com/repos/kieaer/Anti-ripper/releases/latest")
         .header(USER_AGENT, PROGRAM_USER_AGENT)
         .send()
-        .unwrap();
-
+        .expect("Github 연결 오류");
     if response.status().is_success() {
-        let release: Value = response.json()?;
+        let release: Value = response.json().expect("JSON 파싱 오류");
         let tag_name = release["tag_name"].as_str().unwrap_or("Unknown");
         let description = release["body"].as_str().unwrap_or("No description available");
         let last_version = release["html_url"].as_str().unwrap_or("Unknown");
@@ -595,9 +595,9 @@ fn play_audio() {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_author();
-    auto_update()?;
+    auto_update().expect("업데이트 확인 오류");
 
-    fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper"))?;
+    fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper")).expect("폴더 생성 오류");
 
     let auth_token = config_dir().unwrap().join("VRCX/Anti-Ripper/auth");
     let user_id = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.txt");
@@ -606,22 +606,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
 
     if !database.exists() {
-        panic!("VRCX 가 설치되지 않았습니다.");
+        panic!("VRCX 가 설치되지 않았습니다. 프로그램 종료됨.");
     }
 
     // 자동 로그인을 위해 계정 정보 가져오기
     if !auth_token.exists() {
         login();
     }
+
     // VRCX 에서 누락된 데이터를 찾고 추가하기
     if !user_json.exists() {
-        search_old_logs()?;
+        search_old_logs().expect("VRCX 데이터 검색 오류");
     }
+
     // 로그인 된 user_id 값을 확인하고 파일로 저장
     if !user_id.exists() {
-        let mut file = File::open(auth_token.clone())?;
+        let mut file = File::open(auth_token.clone()).expect("파일 열기 오류");
         let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
+        file.read_to_string(&mut contents).expect("파일 읽기 오류");
 
         let client = Client::new();
         let mut headers = HeaderMap::new();
@@ -630,18 +632,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let response = client.get(LOGIN_URL)
             .headers(headers)
             .send()
-            .expect("통신 오류");
-
+            .expect("브챗 서버 로그인 실패");
         if response.status().is_success() {
             let body = response.text().unwrap();
-            let json: Value = serde_json::from_str(&*body).expect("JSON 오류");
-            fs::write(user_id.clone(), json["id"].as_str().unwrap())?;
+            let json: Value = serde_json::from_str(&*body).expect("JSON 파싱 실패");
+            fs::write(user_id.clone(), json["id"].as_str().unwrap()).expect("파일 쓰기 실패");
         }
     }
 
     // 리퍼 스토어에서 정보 확인
     if auth_token.exists() && user_json.exists() && user_id.exists() && !checked.exists() {
-        get_info_from_ripper(&get_id())?;
+        get_info_from_ripper(&get_id()).expect("리퍼 스토어 정보 확인 실패");
     }
 
     if auth_token.exists() && user_json.exists() && user_id.exists() && checked.exists() {
@@ -731,14 +732,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let m = MultiProgress::new();
 
                 loop {
-                    match rx.recv() {
-                        Ok(_) => {
-                            check_log(String::from(path.clone()).as_str(), &m).expect("읽기 오류");
-                        }
-                        Err(e) => println!("watch error: {:?}", e),
-                    }
                     if !is_process_running("VRChat.exe") {
                         break;
+                    }
+
+                    match rx.recv() {
+                        Ok(_) => {
+                            check_log(String::from(path.clone()).as_str(), &m).expect("로그 읽기 실패");
+                        }
+                        Err(e) => println!("watch error: {:?}", e),
                     }
                 }
             }
@@ -748,11 +750,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         loop {
             let mut input = String::new();
-            stdin().read_line(&mut input).expect("Failed to read input");
+            stdin().read_line(&mut input).expect("사용자 입력 읽기 실패");
 
             match input.trim() {
                 "a" => {
-                    let ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json"))?)?;
+                    let ripper_json: Vec<RipperData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/ripper.json")).expect("리퍼 카운트 파일 찾기 실패")).expect("JSON 파싱 오류");
 
                     for value in ripper_json {
                         if value.count > 1 {
