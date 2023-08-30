@@ -729,19 +729,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         thread::spawn(|| {
             loop {
+                loop {
+                    if is_process_running("VRChat.exe") {
+                        break;
+                    }
+
+                    thread::sleep(Duration::from_secs(30));
+                }
+
                 let dir_path = home_dir().unwrap().join("AppData").join("LocalLow").join("VRChat");
                 let specific_word = "output_log";
                 let mut path: String = String::new();
 
                 if let Ok(entries) = fs::read_dir(dir_path) {
-                    loop {
-                        if is_process_running("VRChat.exe") {
-                            break;
-                        }
-
-                        thread::sleep(Duration::from_secs(30));
-                    }
-
                     let mut earliest_creation_time: Option<std::time::SystemTime> = None;
                     let mut earliest_file_path: Option<String> = None;
 
