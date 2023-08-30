@@ -304,7 +304,10 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for value in data_list.into_iter() {
-        if !checked.contains(&value.display_name) {
+        if checked.iter().find(|a| a.to_string() == value.display_name).is_some() {
+            pb.set_message(format!("{} exists", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
+            pb.inc(1);
+        } else {
             if value.clone().user_id.is_empty() {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
                 let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
@@ -343,8 +346,8 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
                 set_user(user_list);
             }
             checked.push(value.display_name);
+            pb.inc(1);
         }
-        pb.inc(1);
     }
 
     let ids = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id_done.txt");
@@ -574,6 +577,7 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
             println!("다운로드 링크: {}", last_version);
             println!("!! 절대로 https://github.com/kieaer 이외의 사이트에서 다운로드 하지 마세요.");
             println!("!! 소스가 공개되어 있기 때문에 다른 곳에서 다운로드 할 경우 위험에 노출될 수 있습니다.");
+            println!();
             println!("== 업데이트 내용");
             println!("{}", description);
         } else {
