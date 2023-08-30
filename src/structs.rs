@@ -1,5 +1,5 @@
 #![allow(non_snake_case)]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserData {
@@ -24,7 +24,7 @@ pub struct ParseData {
 #[derive(Serialize, Deserialize)]
 pub struct AvatarData {
     pub name: String,
-    pub created: u64,
+    pub created: Option<u64>,
     pub added: u64,
     pub updated: Option<u64>,
 }
@@ -36,7 +36,7 @@ pub struct SearchData {
     pub ident: String,
     pub status: String,
     #[serde(rename = "360image")]
-    pub _360image: u32,
+    pub _360image: Option<u32>,
     pub isNSFW: u32,
     pub purchases: u32,
     pub platforms: Vec<String>,
@@ -64,7 +64,7 @@ pub struct PcInfo {
     pub platform: String,
     pub dateAdded: u64,
     pub lastUpdated: Option<u64>,
-    pub created: u64,
+    pub created: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,12 +82,13 @@ pub struct MoreFromAuthor {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Item {
+pub struct AvatarItem {
     pub isLoggedIn: bool,
     pub isPurchased: bool,
     pub isNSFW: u32,
     pub has360Image: bool,
-    pub hierarchy: String,
+    #[serde(skip_deserializing)]
+    pub hierarchy: Vec<String>,
     pub price: u32,
     pub authorName: String,
     pub authorId: Option<String>,

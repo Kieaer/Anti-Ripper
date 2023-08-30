@@ -32,7 +32,7 @@ use winapi::shared::minwindef::{DWORD, MAX_PATH};
 use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32};
 
 use crate::library::{convert_time, get_id, get_ripper, get_user, set_ripper, set_user};
-use crate::structs::{AvatarData, AvatarList, Item, RipperData, SaveData, SearchData, UserData};
+use crate::structs::{AvatarData, AvatarList, AvatarItem, PcInfo, RipperData, SaveData, SearchData, UserData};
 
 mod structs;
 mod library;
@@ -56,7 +56,8 @@ fn login() {
         println!("아이디를 입력하세요");
         let id: String = read!();
         println!("비밀번호를 입력하세요");
-        let pw: String = read_password().expect("비밀번호를 입력 오류");
+        //let pw: String = read_password().expect("비밀번호 입력 오류");
+        let pw: String = read!();
 
         // 로그인 Header 생성
         let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw)))).unwrap();
@@ -168,6 +169,8 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
             })
         }).expect("데이터베이스 쿼리 실행 오류");
 
+        get_ripper();
+
         for value in result {
             let data = value;
             let name = data.unwrap().display_name;
@@ -190,9 +193,8 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
     let client = Client::new();
     let ua = spoof_ua();
 
-    let params = [("category", "authorid"), ("page", "1"), ("search", user_id), ("status", "both"), ("ordering", "none"), ("platform", "all"), ("limit", "36")];
-    let response = client.get(API_URL)
-        .form(&params)
+    let params = format!("?category=authorId&page={}&search={}&status=both&ordering=none&platform=all&limit=36", "1", user_id);
+    let response = client.get(format!("{}{}", API_URL, params))
         .header(USER_AGENT, ua)
         .send()
         .expect("리퍼 스토어 데이터 요청 오류");
@@ -206,10 +208,9 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
         let avatar_progress = ProgressBar::new(avatar_total);
         avatar_progress.set_style(sty.clone());
 
-        for i in 1..page {
-            let params = [("category", "authorid"), ("page", &i.to_string()), ("search", user_id), ("status", "both"), ("ordering", "none"), ("platform", "all"), ("limit", "36")];
-            let response = client.get(API_URL)
-                .form(&params)
+        for i in 0..page {
+            let params = format!("?category=authorId&page={}&search={}&status=both&ordering=none&platform=all&limit=36", i + 1, user_id);
+            let response = client.get(format!("{}{}", API_URL, params))
                 .header(USER_AGENT, ua)
                 .send()
                 .expect("리퍼 스토어 데이터 요청 오류");
@@ -223,33 +224,35 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                 }
 
                 for ident in idents {
-                    let params = [("ident", ident)];
-                    let response = client.get(API_DETAIL_URL)
-                        .form(&params)
+                    let response = client.get(format!("{}?ident={}", API_DETAIL_URL, ident))
                         .header(USER_AGENT, ua)
                         .send()
                         .expect("리퍼 스토어 데이터 요청 오류");
                     if response.status().is_success() {
-                        let json: Value = serde_json::from_str(&*body).expect("리퍼 스토어 데이터 해석 오류");
+                        let rr = response.text().unwrap();
+                        let json: AvatarItem = serde_json::from_str(&*rr).expect("리퍼 스토어 데이터 해석 오류");
 
-                        // 처음 뜯긴 시간에서 뒤로 1분 범위
-                        let base_time = convert_time(json["dateAdded"].as_i64().unwrap() - 60000);
+                        // 생성 날짜가 없으면 검색할 수 없으므로 건너뛰기
+                        if json.pc.created.is_some() {
+                            // 처음 뜯긴 시간에서 뒤로 1분 범위
+                            let base_time = convert_time(json.pc.created.unwrap() - 300000);
 
-                        // 처음 뜯긴 시간에서 앞으로 1분 범위
-                        let range_time = convert_time(json["dateAdded"].as_i64().unwrap() + 60000);
-
-                        // 뜯긴 시점에 있던 사람들 등록
-                        put(base_time, range_time);
-
-                        if !json["lastUpdated"].is_null() {
-                            // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
-                            let base_time = convert_time(json["lastUpdated"].as_i64().unwrap() - 60000);
-
-                            // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
-                            let range_time = convert_time(json["lastUpdated"].as_i64().unwrap() + 60000);
+                            // 처음 뜯긴 시간에서 앞으로 1분 범위
+                            let range_time = convert_time(json.pc.created.unwrap() + 300000);
 
                             // 뜯긴 시점에 있던 사람들 등록
                             put(base_time, range_time);
+
+                            if json.pc.lastUpdated.is_some() {
+                                // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
+                                let base_time = convert_time(json.pc.lastUpdated.unwrap() - 300000);
+
+                                // 마지막으로 뜯긴 시간에서 뒤로 1분 범위
+                                let range_time = convert_time(json.pc.lastUpdated.unwrap() + 300000);
+
+                                // 뜯긴 시점에 있던 사람들 등록
+                                put(base_time, range_time);
+                            }
                         }
 
                         avatar_progress.inc(1);
@@ -258,6 +261,11 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
             }
         }
         avatar_progress.finish_and_clear();
+    }
+
+    if get_ripper().is_empty() {
+        println!("검색된 리퍼 유저 데이터가 없습니다.");
+        println!("뜯긴 아바타는 있는데 검색되지 않은 경우는 VRCX 사용 이전에 뜯겼거나, 리퍼 스토어가 업데이트 되기 전에 뜯겨서 날짜가 기록되지 않은 경우입니다.");
     }
 
     let checked = config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt");
@@ -424,7 +432,7 @@ fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::erro
                     pb.set_message(format!("{} - 확인중...", target_name));
 
                     thread::spawn(move || {
-                        thread::sleep(Duration::from_secs(30));
+                        thread::sleep(Duration::from_secs(150));
 
                         let result = check_current_count(&get_id());
                         pb.finish_and_clear();
@@ -510,7 +518,7 @@ fn check_current_count(user_id: &str) -> bool {
                                     .send()
                                     .expect("리퍼 스토어 데이터 요청 오류");
                                 if response.status().is_success() {
-                                    let data: Item = serde_json::from_str(&*response.text().expect("리퍼 스토어 데이터 읽기 오류")).expect("리퍼 스토어 데이터 해석 오류");
+                                    let data: AvatarItem = serde_json::from_str(&*response.text().expect("리퍼 스토어 데이터 읽기 오류")).expect("리퍼 스토어 데이터 해석 오류");
                                     let name = data.name;
                                     let created = data.pc.created;
                                     let added = data.pc.dateAdded;
@@ -600,7 +608,7 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(_) => {
                     exit(0);
                 }
-                Err(e) => {
+                Err(_) => {
                     exit(1);
                 }
             }
@@ -623,7 +631,7 @@ fn play_audio() {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_author();
-    auto_update().expect("업데이트 확인 오류");
+    // auto_update().expect("업데이트 확인 오류");
 
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper")).expect("폴더 생성 오류");
 
@@ -631,7 +639,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_id = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id.txt");
     let user_json = config_dir().unwrap().join("VRCX/Anti-Ripper/user_id_done.txt");
     let checked = config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt");
+    let version = config_dir().unwrap().join("VRCX/Anti-Ripper/updated.txt");
     let database = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+
+    if !version.exists() && checked.exists() {
+        fs::remove_file(config_dir().unwrap().join("VRCX/Anti-Ripper/store_check.txt")).expect("파일 삭제 오류");
+        fs::write(version, "1").expect("파일 쓰기 오류");
+    }
 
     if !database.exists() {
         panic!("VRCX 가 설치되지 않았습니다. 프로그램 종료됨.");
@@ -774,27 +788,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        println!("실행 완료. a를 눌러 카운트 확인");
+        println!("프로그램 종료를 할 때에는 그냥 닫으시면 됩니다.");
+        println!("a를 입력하여 카운트 확인.");
 
         loop {
-            let mut input = String::new();
-            stdin().read_line(&mut input).expect("사용자 입력 읽기 실패");
+            let command: String = read!();
 
-            match input.trim() {
-                "a" => {
-                    let ripper_json = get_ripper();
-                    let user_json = get_user();
-                    for value in ripper_json {
-                        if value.count > 1 {
-                            if user_json.iter().find(|a| a.display_name == value.name).is_some() {
-                                println!("{}({}) - {}회", value.name, user_json.iter().find(|a| a.display_name == value.name).unwrap().user_id, value.count);
-                            } else {
-                                println!("{} - {}회", value.name, value.count);
-                            }
+            if command == "a" {
+                let ripper_json = get_ripper();
+                let user_json = get_user();
+                let mut found = false;
+                for value in ripper_json {
+                    if value.count != 0 {
+                        found = true;
+                        if user_json.iter().find(|a| a.display_name == value.name).is_some() {
+                            println!("{}({}) - {}회", value.name, user_json.iter().find(|a| a.display_name == value.name).unwrap().user_id, value.count);
+                        } else {
+                            println!("{} - {}회", value.name, value.count);
                         }
                     }
                 }
-                _ => {}
+                if !found {
+                    println!("발견된 리퍼충이 없습니다.")
+                }
             }
         }
     }
