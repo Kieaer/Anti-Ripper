@@ -2,15 +2,15 @@ use std::fs;
 use std::fs::File;
 use std::io::Read;
 
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone};
 use chrono::format::{DelayedFormat, StrftimeItems};
 use dirs::config_dir;
 
 use crate::structs::{RipperData, UserData};
 
 pub fn convert_time<'a>(value: u64) -> DelayedFormat<StrftimeItems<'a>> {
-    let time = NaiveDateTime::from_timestamp_millis(value as i64);
-    let datetime = DateTime::<Local>::from_utc(time.unwrap(), Local.offset_from_utc_datetime(&time.unwrap()));
+    let time = NaiveDateTime::from_timestamp_millis(value as i64).unwrap() - Duration::hours(9);
+    let datetime = DateTime::<Local>::from_utc(time, Local.offset_from_utc_datetime(&time));
     return datetime.format("%Y-%m-%d %H:%M:%S");
 }
 
