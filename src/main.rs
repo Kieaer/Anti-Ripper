@@ -296,14 +296,16 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     println!("프로그램이 VRCX 데이터에서 누락된 사용자 ID를 추가 하고 있습니다.");
     let user_list = get_user();
 
+    let mut already_count = 0;
     for v in user_list {
         checked.push(v.display_name);
-        pb.set_message("이미 저장된 데이터를 확인하는 중...")
+        already_count += 1;
+        pb.set_message(format!("이미 저장된 데이터를 확인하는 중... {}", already_count));
     }
 
     for value in data_list.into_iter() {
-        if value.clone().user_id.is_empty() {
-            if !checked.contains(&value.display_name) {
+        if !checked.contains(&value.display_name) {
+            if value.clone().user_id.is_empty() {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
                 let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
 
@@ -329,10 +331,8 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
                     set_user(user_list);
                 }
-            }
-        } else {
-            let mut user_list = get_user();
-            if !checked.contains(&value.display_name) {
+            } else {
+                let mut user_list = get_user();
                 pb.set_message(format!("{}", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
                 user_list.push(UserData {
                     created_at: value.created_at,
@@ -343,7 +343,6 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
                 set_user(user_list);
             }
         }
-        checked.push(value.display_name);
         pb.inc(1);
     }
 
