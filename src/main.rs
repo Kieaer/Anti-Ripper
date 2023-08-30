@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, stdin};
 use std::path::PathBuf;
+use std::process::{Command, exit};
 use std::rc::Rc;
 use std::sync::mpsc::channel;
 use std::thread::available_parallelism;
@@ -22,6 +23,7 @@ use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT}
 use rodio::{Decoder, OutputStream, Source};
 use rpassword::read_password;
 use rusqlite::Connection;
+use self_update::cargo_crate_version;
 use serde_json::{json, Value};
 use shadow_rs::shadow;
 use text_io::read;
@@ -569,17 +571,39 @@ fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
         let release: Value = response.json().expect("JSON 파싱 오류");
         let tag_name = release["tag_name"].as_str().unwrap_or("Unknown");
         let description = release["body"].as_str().unwrap_or("No description available");
-        let last_version = release["html_url"].as_str().unwrap_or("Unknown");
 
         if tag_name != build::PKG_VERSION {
             println!();
             println!("{} 버전이 나왔습니다. (현재 {} 버전)", tag_name, build::PKG_VERSION);
-            println!("다운로드 링크: {}", last_version);
-            println!("!! 절대로 https://github.com/kieaer 이외의 사이트에서 다운로드 하지 마세요.");
-            println!("!! 소스가 공개되어 있기 때문에 다른 곳에서 다운로드 할 경우 위험에 노출될 수 있습니다.");
             println!();
             println!("== 업데이트 내용");
             println!("{}", description);
+
+            self_update::backends::github::Update::configure()
+                .repo_owner("Kieaer")
+                .repo_name("Anti-Ripper")
+                .bin_name("github")
+                .show_download_progress(true)
+                .current_version(cargo_crate_version!())
+                .target("")
+                .no_confirm(true)
+                .show_output(false)
+                .build()?
+                .update()?;
+
+            println!("업데이트 완료. 5초후 재시작 합니다.");
+            thread::sleep(Duration::from_secs(5));
+            let mut cmd = Command::new(std::env::current_exe().unwrap());
+            let args: Vec<String> = std::env::args().collect();
+            cmd.args(args.iter().skip(1));
+            match cmd.spawn() {
+                Ok(_) => {
+                    exit(0);
+                }
+                Err(e) => {
+                    exit(1);
+                }
+            }
         } else {
             println!("현재 최신 버전입니다.");
         }
