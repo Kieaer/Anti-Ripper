@@ -41,7 +41,7 @@ const TOTP_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/totp/v
 const EMAIL_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/emailotp/verify";
 const API_URL: &str = "https://api.ripper.store/api/v2/avatars/search";
 const API_DETAIL_URL: &str = "https://api.ripper.store/api/v2/avatars/detail";
-const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.7 cloud9350@naver.com";
+const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.8dev cloud9350@naver.com";
 
 shadow!(build);
 
@@ -124,9 +124,9 @@ fn login() {
     }
 }
 
-fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
+fn get_info_from_server_bulk(url: String, count: i32, pb: &ProgressBar) -> Value {
     let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).expect("인증 토큰 파일 읽기 오류");
-    let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n={}", user_name, 1);
+    let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n={}", url, count);
     let client = Client::new();
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
@@ -140,6 +140,30 @@ fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
         pb.set_message("");
     }
 
+    return if response.status().is_success() {
+        let body = response.text().expect("브챗 데이터 읽기 오류");
+        let json: Value = serde_json::from_str(&*body).expect("브챗 데이터 해석 오류");
+        json
+    } else {
+        json!({})
+    };
+}
+
+fn get_info_from_server(user_name: String, pb: &ProgressBar) -> Value {
+    let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).expect("인증 토큰 파일 읽기 오류");
+    let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n=1", user_name);
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, PROGRAM_USER_AGENT.parse().unwrap());
+    headers.insert(COOKIE, HeaderValue::from_str(&*token).expect("인증 토큰 파일 변환 오류"));
+
+    let mut response = client.get(url.clone()).headers(headers.clone()).send().expect("브챗 데이터 다운로드 오류");
+    while !response.status().is_success() {
+        pb.set_message("브챗 서버가 과열 되었습니다! 식을 때 까지 대기중...");
+        thread::sleep(Duration::from_secs(305));
+        response = client.get(url.clone()).headers(headers.clone()).send().expect("브챗 데이터 다운로드 오류");
+        pb.set_message("");
+    }
 
     return if response.status().is_success() {
         let body = response.text().expect("브챗 데이터 읽기 오류");
@@ -312,6 +336,9 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
         pb.set_message(format!("이미 저장된 데이터를 확인하는 중... {}", already_count));
     }
 
+    let mut stack = 0;
+    let mut stack_list: Vec<String> = vec![];
+
     for value in data_list.into_iter() {
         if checked.iter().find(|a| a.to_string() == value.display_name).is_some() {
             pb.set_message(format!("{} exists", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
@@ -323,25 +350,65 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
                 pb.set_message(format!("{} 유저 데이터 다운로드중...", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
 
-                let json = get_info_from_server(value.display_name.clone(), &pb);
+                if stack != 20 && (pb.length().unwrap() - pb.position() > 20) {
+                    stack_list.push(value.display_name.clone());
+                    stack += 1;
+                } else if pb.length().unwrap() - pb.position() < 20 {
+                    let json = get_info_from_server(value.display_name.clone(), &pb);
 
-                let mut user_list = get_user();
-                if value.display_name.clone() == json[0]["displayName"] && user_list.iter().find(|a| a.display_name == value.display_name).is_none() {
-                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).expect("데이터베이스 쿼리 오류");
-                    let result = select_query.query_map([], |row| {
-                        Ok(UserData {
-                            created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
-                            display_name: json[0]["displayName"].to_string().replace("\"", ""),
-                            user_id: json[0]["id"].to_string().replace("\"", ""),
-                        })
-                    }).expect("데이터베이스 쿼리 실행 오류");
+                    let mut user_list = get_user();
+                    if value.display_name.clone() == json[0]["displayName"] && user_list.iter().find(|a| a.display_name == value.display_name).is_none() {
+                        let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).expect("데이터베이스 쿼리 오류");
+                        let result = select_query.query_map([], |row| {
+                            Ok(UserData {
+                                created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
+                                display_name: json[0]["displayName"].to_string().replace("\"", ""),
+                                user_id: json[0]["id"].to_string().replace("\"", ""),
+                            })
+                        }).expect("데이터베이스 쿼리 실행 오류");
 
-                    for data in result {
-                        user_list.push(data.expect("쿼리 결과 오류"));
-                        break;
+                        for data in result {
+                            user_list.push(data.expect("쿼리 결과 오류"));
+                            break;
+                        }
+
+                        set_user(user_list);
+                    }
+                } else {
+                    stack = 0;
+                    let mut merge: String = "".to_string();
+                    merge.push_str(&value.display_name.clone());
+                    for text in stack_list.clone() {
+                        let mut semi = ";".to_string();
+                        semi.push_str(&*text);
+                        merge.push_str(&*semi);
+                    }
+                    stack_list.clear();
+
+                    let json = get_info_from_server_bulk(merge, stack, &pb);
+
+                    for i in 0..19 {
+                        let mut user_list = get_user();
+                        if value.display_name.clone() == json[i]["displayName"] && user_list.iter().find(|a| a.display_name == value.display_name).is_none() {
+                            let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[i]["displayName"])).expect("데이터베이스 쿼리 오류");
+                            let result = select_query.query_map([], |row| {
+                                Ok(UserData {
+                                    created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
+                                    display_name: json[i]["displayName"].to_string().replace("\"", ""),
+                                    user_id: json[i]["id"].to_string().replace("\"", ""),
+                                })
+                            }).expect("데이터베이스 쿼리 실행 오류");
+
+                            for data in result {
+                                user_list.push(data.expect("쿼리 결과 오류"));
+                                break;
+                            }
+
+                            set_user(user_list);
+                        }
                     }
 
-                    set_user(user_list);
+                    thread::sleep(Duration::from_secs(5));
                 }
             } else {
                 let mut user_list = get_user();
