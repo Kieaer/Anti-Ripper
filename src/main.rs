@@ -41,7 +41,7 @@ const TOTP_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/totp/v
 const EMAIL_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/emailotp/verify";
 const API_URL: &str = "https://api.ripper.store/api/v2/avatars/search";
 const API_DETAIL_URL: &str = "https://api.ripper.store/api/v2/avatars/detail";
-const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.8 cloud9350@naver.com";
+const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.9 cloud9350@naver.com";
 
 shadow!(build);
 
@@ -55,8 +55,7 @@ fn login() {
         println!("브챗 아이디를 입력하세요");
         let id: String = read!();
         println!("브챗 비밀번호를 입력하세요");
-        //let pw: String = read_password().expect("비밀번호 입력 오류");
-        let pw: String = read!();
+        let pw: String = read_password().expect("비밀번호 입력 오류");
 
         // 로그인 Header 생성
         let account_auth_header = HeaderValue::from_str(&format!("Basic {}", general_purpose::STANDARD_NO_PAD.encode(&format!("{}:{}", id, pw)))).unwrap();
