@@ -52,9 +52,9 @@ fn login() {
 
     loop {
         // 로그인
-        println!("아이디를 입력하세요");
+        println!("브챗 아이디를 입력하세요");
         let id: String = read!();
-        println!("비밀번호를 입력하세요");
+        println!("브챗 비밀번호를 입력하세요");
         //let pw: String = read_password().expect("비밀번호 입력 오류");
         let pw: String = read!();
 
@@ -124,7 +124,7 @@ fn login() {
     }
 }
 
-fn get_info_from_server_bulk(url: String, count: i32, pb: &ProgressBar) -> Value {
+fn get_info_from_server_bulk(url: String, count: u64, pb: &ProgressBar) -> Value {
     let token = fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/auth")).expect("인증 토큰 파일 읽기 오류");
     let url = format!("https://api.vrchat.cloud/api/1/users?search={}&n={}", url, count);
     let client = Client::new();
@@ -337,23 +337,24 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut stack = 0;
+    let max_size = 8;
     let mut stack_list: Vec<String> = vec![];
 
     for value in data_list.into_iter() {
+        pb.set_message(format!("{} 유저 데이터 다운로드중...", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
+
         if checked.iter().find(|a| a.to_string() == value.display_name).is_some() {
-            pb.set_message(format!("{} exists", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
+            pb.set_message(format!("{} 이미 다운로드됨", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
             pb.inc(1);
         } else {
             if value.clone().user_id.is_empty() {
                 let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
                 let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
 
-                pb.set_message(format!("{} 유저 데이터 다운로드중...", &value.display_name.replace("\u{2028}", "").replace("\u{2029}", "")));
-
-                if stack != 20 && (pb.length().unwrap() - pb.position() > 20) {
+                if stack != max_size && (pb.length().unwrap() - pb.position() > max_size) {
                     stack_list.push(value.display_name.clone());
                     stack += 1;
-                } else if pb.length().unwrap() - pb.position() < 20 {
+                } else if pb.length().unwrap() - pb.position() < max_size {
                     let json = get_info_from_server(value.display_name.clone(), &pb);
 
                     let mut user_list = get_user();
@@ -375,7 +376,6 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
                         set_user(user_list);
                     }
                 } else {
-                    stack = 0;
                     let mut merge: String = "".to_string();
                     merge.push_str(&value.display_name.clone());
                     for text in stack_list.clone() {
@@ -387,7 +387,9 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
 
                     let json = get_info_from_server_bulk(merge, stack, &pb);
 
-                    for i in 0..19 {
+                    stack = 0;
+
+                    for i in 0..(max_size - 1) as usize {
                         let mut user_list = get_user();
                         if value.display_name.clone() == json[i]["displayName"] && user_list.iter().find(|a| a.display_name == value.display_name).is_none() {
                             let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[i]["displayName"])).expect("데이터베이스 쿼리 오류");
@@ -407,8 +409,6 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
                             set_user(user_list);
                         }
                     }
-
-                    thread::sleep(Duration::from_secs(5));
                 }
             } else {
                 let mut user_list = get_user();
