@@ -41,7 +41,7 @@ const TOTP_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/totp/v
 const EMAIL_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/emailotp/verify";
 const API_URL: &str = "https://api.ripper.store/api/v2/avatars/search";
 const API_DETAIL_URL: &str = "https://api.ripper.store/api/v2/avatars/detail";
-const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.8dev cloud9350@naver.com";
+const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.8 cloud9350@naver.com";
 
 shadow!(build);
 
@@ -135,7 +135,10 @@ fn get_info_from_server_bulk(url: String, count: u64, pb: &ProgressBar) -> Value
     let mut response = client.get(url.clone()).headers(headers.clone()).send().expect("브챗 데이터 다운로드 오류");
     while !response.status().is_success() {
         pb.set_message("브챗 서버가 과열 되었습니다! 식을 때 까지 대기중...");
-        thread::sleep(Duration::from_secs(305));
+        for _ in 0..304 {
+            thread::sleep(Duration::from_secs(1));
+            pb.tick();
+        }
         response = client.get(url.clone()).headers(headers.clone()).send().expect("브챗 데이터 다운로드 오류");
         pb.set_message("");
     }
@@ -320,7 +323,7 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
         ready_count += 1;
     }
 
-    let style = ProgressStyle::with_template("{msg}\n{wide_bar:.cyan/blue} {pos}/{len}").expect("진행바 구문 오류").progress_chars("#>-");
+    let style = ProgressStyle::with_template("{msg}\n[{elapsed_precise}] {wide_bar:.cyan/blue} {pos}/{len}").expect("진행바 구문 오류").progress_chars("#>-");
     let pb = ProgressBar::new(ready_count);
     pb.set_style(style);
 
