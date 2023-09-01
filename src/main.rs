@@ -21,6 +21,7 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::cookie::Cookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT};
 use rodio::{Decoder, OutputStream, Source};
+use rpassword::read_password;
 use rusqlite::Connection;
 use self_update::cargo_crate_version;
 use serde_json::{json, Value};
