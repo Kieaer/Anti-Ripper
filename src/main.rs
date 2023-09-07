@@ -42,7 +42,7 @@ const TOTP_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/totp/v
 const EMAIL_URL: &str = "https://api.vrchat.cloud/api/1/auth/twofactorauth/emailotp/verify";
 const API_URL: &str = "https://api.ripper.store/api/v2/avatars/search";
 const API_DETAIL_URL: &str = "https://api.ripper.store/api/v2/avatars/detail";
-const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.9 cloud9350@naver.com";
+const PROGRAM_USER_AGENT: &str = "Ripper Store User Detector / 1.0.10 cloud9350@naver.com";
 
 shadow!(build);
 
