@@ -646,6 +646,7 @@ fn print_author() {
     println!();
     println!("제작자: 키에르");
     println!("Github: https://github.com/kieaer/Anti-Ripper");
+    println!("배포: https://arca.live/b/vrchat/84892729")
 }
 
 fn auto_update() -> Result<(), Box<dyn std::error::Error>> {
