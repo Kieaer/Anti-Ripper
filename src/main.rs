@@ -815,60 +815,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     }
 
-                    thread::sleep(Duration::from_secs(30));
+                    thread::sleep(Duration::from_secs(60));
                 }
 
                 let dir_path = home_dir().unwrap().join("AppData\\LocalLow\\VRChat\\VRChat");
                 let specific_word = "output_log";
                 let mut path: String = String::new();
+                let mut waiting_count = 0;
 
-                if let Ok(entries) = fs::read_dir(dir_path.clone()) {
-                    let mut earliest_creation_time: Option<std::time::SystemTime> = None;
-                    let mut earliest_file_path: Option<String> = None;
+                while path.is_empty() {
+                    if let Ok(entries) = fs::read_dir(dir_path.clone()) {
+                        let mut earliest_creation_time: Option<SystemTime> = None;
+                        let mut earliest_file_path: Option<String> = None;
 
-                    for entry in entries {
-                        if let Ok(entry) = entry {
-                            if let Some(file_name) = entry.file_name().to_str() {
-                                if file_name.contains(specific_word) {
-                                    let metadata = entry.metadata().unwrap();
-                                    if let Ok(creation_time) = metadata.created() {
-                                        if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
-                                            earliest_creation_time = Some(creation_time);
-                                            earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                        for entry in entries {
+                            if let Ok(entry) = entry {
+                                if let Some(file_name) = entry.file_name().to_str() {
+                                    if file_name.contains(specific_word) {
+                                        let metadata = entry.metadata().unwrap();
+                                        if let Ok(creation_time) = metadata.created() {
+                                            if earliest_creation_time.is_none() || creation_time < earliest_creation_time.unwrap() {
+                                                earliest_creation_time = Some(creation_time);
+                                                earliest_file_path = Some(entry.path().to_string_lossy().into_owned());
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+
+                        if let Some(file_path) = earliest_file_path {
+                            path = file_path;
+                            break;
+                        }
                     }
 
-                    if let Some(file_path) = earliest_file_path {
-                        path = file_path;
+                    thread::sleep(Duration::from_secs(1));
+                    // 5분동안 로그 읽기
+                    if waiting_count == 300 {
+                        println!("로그를 읽는데 실패 했습니다. 브챗 데이터 폴더 위치를 이동했거나 브챗을 켜는데 걸린 시간이 너무 길었습니다.");
+                        break;
+                    } else {
+                        waiting_count += 1;
                     }
                 }
 
-                println!("로그 경로: {}", path.clone());
 
-                fn get_last_modified_time(path: &str) -> SystemTime {
-                    let metadata = fs::metadata(Path::new(path)).expect("Failed to read metadata");
-                    metadata.modified().expect("Failed to get last modified time")
-                }
+                if !path.is_empty() {
+                    println!("로그 경로: {}", path.clone());
 
-                let m = MultiProgress::new();
-                let mut last_modified = get_last_modified_time(&*path.clone());
+                    fn get_last_modified_time(path: &str) -> SystemTime {
+                        let metadata = fs::metadata(Path::new(path)).expect("Failed to read metadata");
+                        metadata.modified().expect("Failed to get last modified time")
+                    }
 
-                loop {
-                    thread::sleep(Duration::from_millis(10));
+                    let m = MultiProgress::new();
+                    let mut last_modified = get_last_modified_time(&*path.clone());
 
-                    let current_modified = get_last_modified_time(&*path.clone());
-                    if current_modified > last_modified {
+                    loop {
+                        thread::sleep(Duration::from_millis(10));
+
                         if !is_process_running("VRChat.exe") {
                             println!("브챗 종료됨.");
                             break;
                         }
 
-                        check_log(String::from(path.clone()).as_str(), &m).expect("로그 읽기 실패");
-                        last_modified = current_modified;
+                        let current_modified = get_last_modified_time(&*path.clone());
+                        if current_modified > last_modified {
+                            check_log(String::from(path.clone()).as_str(), &m).expect("로그 읽기 실패");
+                            last_modified = current_modified;
+                        }
                     }
                 }
             }
