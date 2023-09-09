@@ -1,8 +1,8 @@
-use std::{fs, ptr, thread};
+use std::{fs, io, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::process::{Command, exit};
 use std::rc::Rc;
@@ -436,105 +436,6 @@ fn search_old_logs() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn check_log(file_path: &str, m: &MultiProgress) -> Result<(), Box<dyn std::error::Error>> {
-    let mut file = File::open(file_path)?;
-
-    let mut buffer = [0; 4096];
-    let mut last_line = String::new();
-    let mut position = file.seek(SeekFrom::End(0))? as i64;
-
-    loop {
-        let read_size = if position >= buffer.len() as i64 {
-            buffer.len()
-        } else {
-            position as usize
-        };
-
-        position -= read_size as i64;
-        file.seek(SeekFrom::Start(position as u64))?;
-
-        file.read_exact(&mut buffer[..read_size])?;
-        let read_content = String::from_utf8_lossy(&buffer[..read_size]);
-        let lines: Vec<_> = read_content.lines().collect();
-
-        if lines.len() > 1 {
-            last_line = lines[lines.len() - 2].to_string();
-            if last_line.chars().any(|c| c.is_alphabetic()) {
-                break;
-            }
-        }
-
-        if position <= 0 {
-            break;
-        }
-    }
-
-    let pattern = r"OnPlayerJoined\s+(\w+)";
-    let re = Regex::new(pattern).expect("정규식 패턴 오류");
-
-    if let Some(captures) = re.captures(last_line.trim()) {
-        if let Some(word_after) = captures.get(1) {
-            let target_name = word_after.clone().as_str().to_string();
-
-            let pb = Arc::new(Mutex::new(m.add(ProgressBar::new(1))));
-            let pb_clone = Arc::clone(&pb);
-            let style = ProgressStyle::with_template("{spinner} {wide_msg}").unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
-            pb.lock().unwrap().set_style(style);
-            pb.lock().unwrap().set_message(format!("{} - 유저 확인중...", target_name));
-
-            let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).expect("파일 오류")).expect("JSON 구문 오류");
-            let exists = file_json.iter().find(|a| target_name == a.display_name);
-            if exists.is_none() {
-                pb.lock().unwrap().set_message(format!("{} - 서버에서 검색중...", target_name));
-                let json = get_info_from_server(last_line.as_str().to_string(), &pb.lock().unwrap());
-
-                let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
-                let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
-
-                let mut user_list: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).expect("파일 오류")).expect("JSON 구문 오류");
-                let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).expect("데이터베이스 쿼리 오류");
-                let result = select_query.query_map([], |row| {
-                    Ok(UserData {
-                        created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
-                        display_name: json[0]["displayName"].to_string().replace("\"", ""),
-                        user_id: json[0]["id"].to_string().replace("\"", ""),
-                    })
-                }).expect("데이터베이스 쿼리 실행 오류");
-
-                for data in result {
-                    user_list.push(data.expect("쿼리 결과 오류"));
-                    break;
-                }
-
-                set_user(user_list);
-            } else {
-                pb.lock().unwrap().set_message(format!("{} - 이미 등록된 유저", target_name));
-            }
-            pb.lock().unwrap().set_message(format!("{} - 확인중...", target_name));
-
-            thread::spawn(move || {
-                thread::sleep(Duration::from_secs(150));
-                let result = check_current_count(&get_id());
-                let pb = pb_clone.lock().unwrap();
-                pb.finish_and_clear();
-                if result {
-                    let mut json = get_ripper();
-                    let count = json.clone().iter().find(|a| a.name == target_name).expect("JSON 파싱 오류").count;
-
-                    if let Some(index) = json.iter().position(|a| a.name == target_name) {
-                        json[index].count += 1;
-                        set_ripper(json);
-                    }
-                    play_audio();
-                    println!("{} 유저가 입장했을 때 뜯겼습니다. 현재 이 유저의 감지 횟수는 {}회.", target_name, count + 1);
-                }
-            });
-        }
-    }
-
-    Ok(())
-}
-
 fn check_current_count(user_id: &str) -> bool {
     fn set_params(page: u32, user_id: &str) -> [(String, String); 7] {
         return [
@@ -824,7 +725,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut path: String = String::new();
                 let mut waiting_count = 0;
 
+                fn check_last() {
+
+                }
+
                 while path.is_empty() {
+                    thread::sleep(Duration::from_secs(1));
+                    // 5분동안 로그 읽기
+                    if waiting_count == 300 {
+                        println!("로그를 읽는데 실패 했습니다. 브챗 데이터 폴더 위치를 이동했거나 브챗을 켜는데 걸린 시간이 너무 길었습니다.");
+                        break;
+                    } else {
+                        waiting_count += 1;
+                    }
+
+                    let mut matching_files: Vec<fs::DirEntry> = Vec::new();
+                    let entries = fs::read_dir(dir_path.clone()).unwrap();
+
+                    for entry in entries {
+                        let entry = entry.unwrap();
+                        let path = entry.path();
+                        let file_name = path.file_name().unwrap().to_string_lossy().to_lowercase();
+
+                        if file_name.contains(specific_word) {
+                            matching_files.push(entry);
+                        }
+                    }
+
+                    matching_files.sort_by(|a, b| {
+                        let a_metadata = a.metadata().unwrap();
+                        let b_metadata = b.metadata().unwrap();
+                        b_metadata.modified().unwrap().cmp(&a_metadata.modified().unwrap())
+                    });
+
+                    if let Some(_) = matching_files.first() {
+                        for file in matching_files.iter().skip(1) {
+                            let file_path = file.path();
+                            fs::remove_file(&file_path).expect("파일 삭제 오류");
+                        }
+                    }
+
                     if let Ok(entries) = fs::read_dir(dir_path.clone()) {
                         let mut earliest_creation_time: Option<SystemTime> = None;
                         let mut earliest_file_path: Option<String> = None;
@@ -850,28 +790,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break;
                         }
                     }
-
-                    thread::sleep(Duration::from_secs(1));
-                    // 5분동안 로그 읽기
-                    if waiting_count == 300 {
-                        println!("로그를 읽는데 실패 했습니다. 브챗 데이터 폴더 위치를 이동했거나 브챗을 켜는데 걸린 시간이 너무 길었습니다.");
-                        break;
-                    } else {
-                        waiting_count += 1;
-                    }
                 }
 
 
                 if !path.is_empty() {
                     println!("로그 경로: {}", path.clone());
 
-                    fn get_last_modified_time(path: &str) -> SystemTime {
-                        let metadata = fs::metadata(Path::new(path)).expect("Failed to read metadata");
-                        metadata.modified().expect("Failed to get last modified time")
-                    }
-
                     let m = MultiProgress::new();
-                    let mut last_modified = get_last_modified_time(&*path.clone());
+                    let mut file_size = 0;
+
+                    let mut owner = String::new();
 
                     loop {
                         thread::sleep(Duration::from_millis(10));
@@ -881,10 +809,92 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break;
                         }
 
-                        let current_modified = get_last_modified_time(&*path.clone());
-                        if current_modified > last_modified {
-                            check_log(String::from(path.clone()).as_str(), &m).expect("로그 읽기 실패");
-                            last_modified = current_modified;
+                        let mut file = File::open(path.clone()).expect("로그 파일 열기 오류");
+                        let current_size = file.metadata().expect("로그 파일 데이터 읽기 오류").len();
+                        if current_size > file_size {
+                            file.seek(SeekFrom::Start(file_size)).expect("로그 파일 부분 읽기 오류");
+                            let new_content = io::BufReader::new(&file);
+                            for line in new_content.lines() {
+                                if let Ok(line_str) = line {
+                                    let owner_pattern = Regex::new(r"User Authenticated: (\w+) \(").unwrap();
+                                    if let Some(captures) = owner_pattern.captures(line_str.trim()) {
+                                        if let Some(username) = captures.get(1) {
+                                            owner = username.as_str().to_string();
+                                        }
+                                    }
+
+                                    let pattern = r"OnPlayerJoined\s+(\w+)";
+                                    let re = Regex::new(pattern).expect("정규식 패턴 오류");
+
+                                    if let Some(captures) = re.captures(line_str.trim()) {
+                                        if let Some(word_after) = captures.get(1) {
+                                            let target_name = word_after.clone().as_str().to_string();
+                                            if target_name != owner {
+                                                let pb = Arc::new(Mutex::new(m.add(ProgressBar::new(1))));
+                                                let pb_clone = Arc::clone(&pb);
+                                                let style = ProgressStyle::with_template("{spinner} {wide_msg}").unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+                                                pb.lock().unwrap().set_style(style);
+                                                pb.lock().unwrap().set_message(format!("{} - 유저 확인중...", target_name));
+
+                                                let file_json: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).expect("파일 오류")).expect("JSON 구문 오류");
+                                                let exists = file_json.iter().find(|a| target_name == a.display_name);
+                                                if exists.is_none() {
+                                                    pb.lock().unwrap().set_message(format!("{} - 서버에서 검색중...", target_name));
+                                                    let json = get_info_from_server(line_str.as_str().to_string(), &pb.lock().unwrap());
+
+                                                    let database_path = config_dir().unwrap().join("VRCX/VRCX.sqlite3");
+                                                    let conn = Connection::open(database_path).expect("VRCX 데이터베이스 오류");
+
+                                                    let mut user_list: Vec<UserData> = serde_json::from_str(&*fs::read_to_string(config_dir().unwrap().join("VRCX/Anti-ripper/user_id.json")).expect("파일 오류")).expect("JSON 구문 오류");
+                                                    let mut select_query = conn.prepare(&format!("SELECT created_at FROM gamelog_join_leave WHERE display_name = {}", json[0]["displayName"])).expect("데이터베이스 쿼리 오류");
+                                                    let result = select_query.query_map([], |row| {
+                                                        Ok(UserData {
+                                                            created_at: row.get(0).expect("데이터베이스에서 created_at 값 읽기 오류"),
+                                                            display_name: json[0]["displayName"].to_string().replace("\"", ""),
+                                                            user_id: json[0]["id"].to_string().replace("\"", ""),
+                                                        })
+                                                    }).expect("데이터베이스 쿼리 실행 오류");
+
+                                                    for data in result {
+                                                        user_list.push(data.expect("쿼리 결과 오류"));
+                                                        break;
+                                                    }
+
+                                                    set_user(user_list);
+                                                } else {
+                                                    pb.lock().unwrap().set_message(format!("{} - 이미 등록된 유저", target_name));
+                                                }
+                                                pb.lock().unwrap().set_message(format!("{} - 확인중...", target_name));
+
+                                                thread::spawn(move || {
+                                                    let pb = pb_clone.lock().unwrap();
+                                                    let mut time = 0;
+                                                    for _ in 0..150 {
+                                                        thread::sleep(Duration::from_secs(1));
+                                                        time += 1;
+                                                        pb.set_message(format!("{} - 대기중... {}", target_name, time));
+                                                    }
+                                                    let result = check_current_count(&get_id());
+                                                    pb.finish_and_clear();
+
+                                                    if result {
+                                                        let mut json = get_ripper();
+                                                        let count = json.clone().iter().find(|a| a.name == target_name).expect("JSON 파싱 오류").count;
+
+                                                        if let Some(index) = json.iter().position(|a| a.name == target_name) {
+                                                            json[index].count += 1;
+                                                            set_ripper(json);
+                                                        }
+                                                        play_audio();
+                                                        println!("{} 유저가 입장했을 때 뜯겼습니다. 현재 이 유저의 감지 횟수는 {}회.", target_name, count + 1);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            file_size = current_size;
                         }
                     }
                 }
