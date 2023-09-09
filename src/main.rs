@@ -3,7 +3,6 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
 use std::process::{Command, exit};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -724,10 +723,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let specific_word = "output_log";
                 let mut path: String = String::new();
                 let mut waiting_count = 0;
-
-                fn check_last() {
-
-                }
 
                 while path.is_empty() {
                     thread::sleep(Duration::from_secs(1));
