@@ -26,7 +26,7 @@ pub struct ParseData {
 pub struct AvatarData {
     pub name: String,
     pub created: Option<u64>,
-    pub added: u64,
+    pub added: Option<u64>,
     pub updated: Option<u64>,
 }
 
@@ -63,7 +63,7 @@ pub struct PcInfo {
     pub size: u64,
     pub unityVersion: String,
     pub platform: String,
-    pub dateAdded: u64,
+    pub dateAdded: Option<u64>,
     pub lastUpdated: Option<u64>,
     pub created: Option<u64>,
 }

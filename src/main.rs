@@ -255,6 +255,7 @@ fn get_info_from_ripper(user_id: &str) -> Result<(), Box<dyn std::error::Error>>
                         .expect("리퍼 스토어 데이터 요청 오류");
                     if response.status().is_success() {
                         let rr = response.text().unwrap();
+                        println!("{}", rr.clone());
                         let json: AvatarItem = serde_json::from_str(&*rr).expect("리퍼 스토어 데이터 해석 오류");
 
                         // 생성 날짜가 없으면 검색할 수 없으므로 건너뛰기
