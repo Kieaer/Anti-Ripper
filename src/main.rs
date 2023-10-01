@@ -1,6 +1,7 @@
-use std::{fs, io, ptr, thread};
+use std::{env, fs, io, ptr, thread};
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::env::current_exe;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::process::{Command, exit};
@@ -609,8 +610,25 @@ fn play_audio() {
     stream_handle.play_raw(source.convert_samples()).unwrap();
 }
 
+fn print_end() {
+    println!("== 공지 ==");
+    println!("드디어 2023년 10월 1일부로 리퍼 스토어가 문을 닫았습니다.");
+    println!("이제 이 프로그램은 더이상 사용되지 않으며, 이 문구 이후 이 프로그램은 더이상 실행되지 않습니다.");
+    println!("하지만 이것으로 리핑이 끝은 아닙니다.");
+    println!("여전히 개인 PC로 아바타를 뜯는 툴이 돌아다니고 있으며, 추후에 이러한 툴을 감지하는 툴의 원리를 알아낸다면 나중에라도 이 프로그램이 다시 살아날 수 있습니다.");
+    println!("그럼 행복한 아바타 제작을 하시길 바랍니다!");
+    println!();
+
+    let itself = std::env::current_exe().unwrap();
+    let parent = itself.parent().unwrap();
+    self_replace::self_delete_outside_path(&parent).unwrap();
+    fs::remove_dir_all(&parent).unwrap();
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_author();
+    print_end();
+
     auto_update().expect("업데이트 확인 오류");
 
     fs::create_dir_all(config_dir().unwrap().join("VRCX/Anti-Ripper")).expect("폴더 생성 오류");
